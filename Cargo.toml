@@ -1,0 +1,19 @@
+[package]
+name = "hnsw-rs"
+version = "0.1.0"
+edition = "2024"
+description = "A compact, mmap-friendly HNSW vector index"
+license = "MIT"
+documentation = "https://docs.rs/hnsw-rs"
+readme = "README.md"
+rust-version = "1.85"
+publish = false
+
+[dependencies]
+crc32fast = "1.5"
+memmap2 = "0.9"
+rand = "0.10"
+
+[[bench]]
+name = "distance"
+harness = false

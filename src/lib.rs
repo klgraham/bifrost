@@ -1,0 +1,23 @@
+//! A compact Hierarchical Navigable Small World (HNSW) vector index.
+//!
+//! It supports incremental insertion, approximate nearest-neighbor search with
+//! cosine distance, and mmap-friendly `.hnsw` v3 persistence.
+
+#![forbid(unsafe_op_in_unsafe_fn)]
+
+mod config;
+mod error;
+mod graph;
+mod index;
+mod layer;
+pub mod serialize;
+pub mod vector;
+
+pub use config::Config;
+pub use error::{Error, Result};
+pub use graph::{ExternalId, Graph, NodeIndex, NodeMeta};
+pub use index::{HnswIndex, SearchHit};
+pub use serialize::{
+    HEADER_SIZE, Header, LoadedHnsw, MAGIC, MIGRATABLE_VERSION, NODE_META_SIZE, VERSION, load_file,
+    save_file,
+};
