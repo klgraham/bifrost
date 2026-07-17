@@ -129,7 +129,7 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo bench --bench distance
-cargo check --manifest-path benchmarks/competitors/Cargo.toml
+cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
 The persistence suite loads a deterministic v3 golden file and requires the
@@ -179,6 +179,60 @@ cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
 
 The list overrides `HNSW_BENCH_EF_SEARCH`. This avoids rebuilding randomized
 graphs between points on the latency-versus-recall curve.
+
+#### BEIR FiQA-2018 with OpenAI embeddings
+
+The independent benchmark crate can prepare and consume a real
+[BEIR FiQA-2018](https://github.com/beir-cellar/beir) retrieval fixture. The
+preparer embeds the 57,600 non-empty corpus documents and the 648 queries in
+the test qrels with OpenAI `text-embedding-3-small` at its default 1,536
+dimensions. (The source archive contains 38 empty corpus rows that are not
+referenced by the test qrels; these are skipped.)
+Generated source data, request caches, and vectors live under
+`benchmarks/competitors/data/`, which is ignored by Git.
+
+First, download and validate the public dataset without making an OpenAI API
+request:
+
+```bash
+cargo run --release \
+  --manifest-path benchmarks/competitors/Cargo.toml \
+  --features fiqa-prep \
+  --bin prepare-fiqa \
+  -- --download-only
+```
+
+Then review the expected API usage, set `OPENAI_API_KEY`, and generate the
+fixture:
+
+```bash
+OPENAI_API_KEY=... cargo run --release \
+  --manifest-path benchmarks/competitors/Cargo.toml \
+  --features fiqa-prep \
+  --bin prepare-fiqa
+```
+
+Embedding responses are cached one batch at a time, so an interrupted run can
+resume without repeating completed requests. The tool validates response
+indexes, dimensions, and vector norms before atomically packing little-endian
+`f32` files. Use `--max-corpus` and `--max-queries` for a lower-cost fixture;
+`--help` lists the model, dimension, batch-size, and output overrides. OpenAI's
+[embeddings API reference](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
+documents the request used by the preparer.
+
+Run the comparison against the prepared vectors with:
+
+```bash
+HNSW_BENCH_FIXTURE=benchmarks/competitors/data/fiqa-text-embedding-3-small \
+HNSW_BENCH_EF_SEARCHES=100,200,400 \
+cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
+```
+
+For a fixture, `HNSW_BENCH_VECTORS` and `HNSW_BENCH_QUERIES` optionally limit
+the loaded prefix, while its manifest supplies the vector dimension. In
+addition to build and query performance, the report distinguishes exact ANN
+recall from retrieval quality: nDCG@k and qrels recall@k use only test queries
+that retain a relevant document in the loaded corpus subset.
 
 Run benchmark comparisons on an otherwise idle machine. The suite deliberately
 uses one caller for insertion and search so library-internal behavior is being
