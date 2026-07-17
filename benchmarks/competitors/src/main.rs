@@ -9,7 +9,7 @@ use std::{
 };
 
 use hnsw_rs::{Config, HnswIndex, vector::dot};
-use hnsw_rs_upstream::prelude::{DistDot, Hnsw};
+use hnsw_rs_upstream::prelude::{Distance, Hnsw};
 use usearch::{Index as UsearchIndex, IndexOptions, MetricKind, ScalarKind};
 
 const UPSTREAM_VERSION: &str = "0.3.4";
@@ -107,6 +107,7 @@ struct Dataset {
     vectors: Vec<Vec<f32>>,
     queries: Vec<Vec<f32>>,
     relevance: Option<Relevance>,
+    fixture_directory: Option<PathBuf>,
 }
 
 struct Relevance {
@@ -118,6 +119,21 @@ struct Relevance {
 struct SemanticMetrics {
     ndcg: f64,
     recall: f64,
+}
+
+#[derive(Clone, Copy)]
+struct UpstreamInnerProduct;
+
+impl Distance<f32> for UpstreamInnerProduct {
+    fn eval(&self, left: &[f32], right: &[f32]) -> f32 {
+        assert_eq!(left.len(), right.len());
+        (1.0 - left
+            .iter()
+            .zip(right)
+            .map(|(left, right)| left * right)
+            .sum::<f32>())
+        .max(0.0)
+    }
 }
 
 fn main() -> Result<()> {
@@ -160,6 +176,7 @@ fn main() -> Result<()> {
                 parameters.seed ^ 0xa076_1d64_78bd_642f,
             ),
             relevance: None,
+            fixture_directory: None,
         }
     };
     let ef_searches =
@@ -339,6 +356,16 @@ fn main() -> Result<()> {
         "All builds and searches are single-caller and in-memory; dependency setup and data generation are excluded."
     );
     println!("USearch uses f32 storage. Timings include each crate's public Rust API boundary.");
+    if let Some(directory) = &dataset.fixture_directory {
+        let indexes = directory.join("indexes");
+        fs::create_dir_all(&indexes)?;
+        let path = indexes.join(format!(
+            "hnsw-rs-m{}-efc{}-seed{}.hnsw",
+            parameters.m, parameters.ef_construction, parameters.seed
+        ));
+        ours.save(&path)?;
+        println!("Saved the hnsw-rs index to {}.", path.display());
+    }
     Ok(())
 }
 
@@ -416,6 +443,7 @@ fn load_fixture(
         vectors,
         queries,
         relevance,
+        fixture_directory: Some(directory.to_owned()),
     })
 }
 
@@ -639,13 +667,16 @@ fn build_ours(vectors: &[Vec<f32>], parameters: Parameters) -> HnswIndex {
     index
 }
 
-fn build_upstream(vectors: &[Vec<f32>], parameters: Parameters) -> Hnsw<'static, f32, DistDot> {
-    let index = Hnsw::<f32, DistDot>::new(
+fn build_upstream(
+    vectors: &[Vec<f32>],
+    parameters: Parameters,
+) -> Hnsw<'static, f32, UpstreamInnerProduct> {
+    let index = Hnsw::<f32, UpstreamInnerProduct>::new(
         parameters.m,
         parameters.vectors,
         16,
         parameters.ef_construction,
-        DistDot {},
+        UpstreamInnerProduct,
     );
     for (id, vector) in vectors.iter().enumerate() {
         index.insert((vector, id));

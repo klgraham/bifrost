@@ -149,9 +149,12 @@ throughput, and recall@k against an exact inner-product scan.
 The default comparison uses 10,000 384-dimensional vectors, 100 queries,
 `k=10`, `M=16`, `ef_construction=200`, and `ef_search=100`. The three indexes
 use equivalent inner-product rankings: this crate's normalized cosine
-distance, `hnsw_rs::DistDot`, and USearch's `MetricKind::IP` with `f32`
-storage. Data generation, exact ground truth, and dependency setup are outside
-the reported timings.
+distance, a non-negative `max(0, 1 - dot)` custom distance through `hnsw_rs`'s
+public distance interface, and USearch's `MetricKind::IP` with `f32` storage.
+The custom upstream distance avoids `hnsw_rs::DistDot` panicking when normal
+`f32` rounding makes a unit vector's self-dot slightly greater than one; the
+zero clamp affects only that rounding error. Data generation, exact ground
+truth, and dependency setup are outside the reported timings.
 
 Every workload setting can be overridden for quick smoke runs or larger tests:
 
@@ -227,6 +230,12 @@ HNSW_BENCH_FIXTURE=benchmarks/competitors/data/fiqa-text-embedding-3-small \
 HNSW_BENCH_EF_SEARCHES=100,200,400 \
 cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
 ```
+
+After the timed comparison, the runner saves this crate's built index under
+the fixture directory as
+`indexes/hnsw-rs-m<M>-efc<EF_CONSTRUCTION>-seed<SEED>.hnsw`. The raw `f32`
+files remain the canonical cross-implementation fixture; the `.hnsw` file is a
+derived, memory-mapped index for later query-only use.
 
 For a fixture, `HNSW_BENCH_VECTORS` and `HNSW_BENCH_QUERIES` optionally limit
 the loaded prefix, while its manifest supplies the vector dimension. In
