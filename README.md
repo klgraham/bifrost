@@ -129,11 +129,60 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo bench --bench distance
+cargo check --manifest-path benchmarks/competitors/Cargo.toml
 ```
 
 The persistence suite loads a deterministic v3 golden file and requires the
 writer to reproduce all 220 bytes exactly. Its SHA-256 is documented in
 `tests/fixtures/README.md`.
+
+### Competitor benchmark
+
+`benchmarks/competitors` is an independent crate that compares this project
+with pure-Rust `hnsw_rs` and the Rust bindings for USearch. Keeping it separate
+prevents the competing libraries and USearch's native backend from becoming
+development dependencies of the library crate. The benchmark generates
+deterministic unit-normalized `f32` vectors, builds each index through its
+public Rust API, and reports sequential build throughput, query latency, query
+throughput, and recall@k against an exact inner-product scan.
+
+The default comparison uses 10,000 384-dimensional vectors, 100 queries,
+`k=10`, `M=16`, `ef_construction=200`, and `ef_search=100`. The three indexes
+use equivalent inner-product rankings: this crate's normalized cosine
+distance, `hnsw_rs::DistDot`, and USearch's `MetricKind::IP` with `f32`
+storage. Data generation, exact ground truth, and dependency setup are outside
+the reported timings.
+
+Every workload setting can be overridden for quick smoke runs or larger tests:
+
+```bash
+HNSW_BENCH_VECTORS=100000 \
+HNSW_BENCH_DIMENSIONS=768 \
+HNSW_BENCH_QUERIES=1000 \
+HNSW_BENCH_REPETITIONS=10 \
+HNSW_BENCH_K=10 \
+HNSW_BENCH_M=16 \
+HNSW_BENCH_EF_CONSTRUCTION=200 \
+HNSW_BENCH_EF_SEARCH=100 \
+HNSW_BENCH_SEED=42 \
+cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
+```
+
+Set `HNSW_BENCH_EF_SEARCHES` to a comma-separated list to build each index
+once and measure a controlled query-width sweep over the same graph:
+
+```bash
+HNSW_BENCH_DIMENSIONS=1536 \
+HNSW_BENCH_EF_SEARCHES=200,400,800 \
+cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
+```
+
+The list overrides `HNSW_BENCH_EF_SEARCH`. This avoids rebuilding randomized
+graphs between points on the latency-versus-recall curve.
+
+Run benchmark comparisons on an otherwise idle machine. The suite deliberately
+uses one caller for insertion and search so library-internal behavior is being
+compared rather than different caller-side parallelization strategies.
 
 ## Design notes
 

@@ -1,0 +1,11 @@
+[package]
+name = "hnsw-rs-competitor-benchmarks"
+version = "0.0.0"
+edition = "2024"
+publish = false
+rust-version = "1.85"
+
+[dependencies]
+hnsw-rs = { path = "../.." }
+hnsw_rs_upstream = { package = "hnsw_rs", version = "=0.3.4" }
+usearch = "=2.26.0"
