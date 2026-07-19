@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 - 2026-07-18
+
+- Add an isolated competitor benchmark crate for comparing hnsw-rs with
+  `hnsw_rs` and USearch without adding those dependencies to the published
+  library.
+- Add reproducible 1,536-dimensional synthetic and BEIR FiQA-2018 evaluations
+  covering build cost, query latency, exact ANN recall, nDCG, and qrels recall.
+- Persist validated local `.hnsw` benchmark indexes after timed runs while
+  keeping generated embeddings, indexes, and results out of version control.
+
 ## 0.1.0 - 2026-07-14
 
 - Introduce HNSW graph construction and cosine-distance search for normalized
