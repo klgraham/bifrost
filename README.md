@@ -129,11 +129,123 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo bench --bench distance
+cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
 The persistence suite loads a deterministic v3 golden file and requires the
 writer to reproduce all 220 bytes exactly. Its SHA-256 is documented in
 `tests/fixtures/README.md`.
+
+### Competitor benchmark
+
+`benchmarks/competitors` is an independent crate that compares this project
+with pure-Rust `hnsw_rs` and the Rust bindings for USearch. Keeping it separate
+prevents the competing libraries and USearch's native backend from becoming
+development dependencies of the library crate. The benchmark generates
+deterministic unit-normalized `f32` vectors, builds each index through its
+public Rust API, and reports sequential build throughput, query latency, query
+throughput, and recall@k against an exact inner-product scan.
+
+The default comparison uses 10,000 384-dimensional vectors, 100 queries,
+`k=10`, `M=16`, `ef_construction=200`, and `ef_search=100`. The three indexes
+use equivalent inner-product rankings: this crate's normalized cosine
+distance, a non-negative `max(0, 1 - dot)` custom distance through `hnsw_rs`'s
+public distance interface, and USearch's `MetricKind::IP` with `f32` storage.
+The custom upstream distance avoids `hnsw_rs::DistDot` panicking when normal
+`f32` rounding makes a unit vector's self-dot slightly greater than one; the
+zero clamp affects only that rounding error. Data generation, exact ground
+truth, and dependency setup are outside the reported timings.
+
+Every workload setting can be overridden for quick smoke runs or larger tests:
+
+```bash
+HNSW_BENCH_VECTORS=100000 \
+HNSW_BENCH_DIMENSIONS=768 \
+HNSW_BENCH_QUERIES=1000 \
+HNSW_BENCH_REPETITIONS=10 \
+HNSW_BENCH_K=10 \
+HNSW_BENCH_M=16 \
+HNSW_BENCH_EF_CONSTRUCTION=200 \
+HNSW_BENCH_EF_SEARCH=100 \
+HNSW_BENCH_SEED=42 \
+cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
+```
+
+Set `HNSW_BENCH_EF_SEARCHES` to a comma-separated list to build each index
+once and measure a controlled query-width sweep over the same graph:
+
+```bash
+HNSW_BENCH_DIMENSIONS=1536 \
+HNSW_BENCH_EF_SEARCHES=200,400,800 \
+cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
+```
+
+The list overrides `HNSW_BENCH_EF_SEARCH`. This avoids rebuilding randomized
+graphs between points on the latency-versus-recall curve.
+
+#### BEIR FiQA-2018 with OpenAI embeddings
+
+The independent benchmark crate can prepare and consume a real
+[BEIR FiQA-2018](https://github.com/beir-cellar/beir) retrieval fixture. The
+preparer embeds the 57,600 non-empty corpus documents and the 648 queries in
+the test qrels with OpenAI `text-embedding-3-small` at its default 1,536
+dimensions. (The source archive contains 38 empty corpus rows that are not
+referenced by the test qrels; these are skipped.)
+Generated source data, request caches, and vectors live under
+`benchmarks/competitors/data/`, which is ignored by Git.
+
+First, download and validate the public dataset without making an OpenAI API
+request:
+
+```bash
+cargo run --release \
+  --manifest-path benchmarks/competitors/Cargo.toml \
+  --features fiqa-prep \
+  --bin prepare-fiqa \
+  -- --download-only
+```
+
+Then review the expected API usage, set `OPENAI_API_KEY`, and generate the
+fixture:
+
+```bash
+OPENAI_API_KEY=... cargo run --release \
+  --manifest-path benchmarks/competitors/Cargo.toml \
+  --features fiqa-prep \
+  --bin prepare-fiqa
+```
+
+Embedding responses are cached one batch at a time, so an interrupted run can
+resume without repeating completed requests. The tool validates response
+indexes, dimensions, and vector norms before atomically packing little-endian
+`f32` files. Use `--max-corpus` and `--max-queries` for a lower-cost fixture;
+`--help` lists the model, dimension, batch-size, and output overrides. OpenAI's
+[embeddings API reference](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
+documents the request used by the preparer.
+
+Run the comparison against the prepared vectors with:
+
+```bash
+HNSW_BENCH_FIXTURE=benchmarks/competitors/data/fiqa-text-embedding-3-small \
+HNSW_BENCH_EF_SEARCHES=100,200,400 \
+cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
+```
+
+After the timed comparison, the runner saves this crate's built index under
+the fixture directory as
+`indexes/hnsw-rs-m<M>-efc<EF_CONSTRUCTION>-seed<SEED>.hnsw`. The raw `f32`
+files remain the canonical cross-implementation fixture; the `.hnsw` file is a
+derived, memory-mapped index for later query-only use.
+
+For a fixture, `HNSW_BENCH_VECTORS` and `HNSW_BENCH_QUERIES` optionally limit
+the loaded prefix, while its manifest supplies the vector dimension. In
+addition to build and query performance, the report distinguishes exact ANN
+recall from retrieval quality: nDCG@k and qrels recall@k use only test queries
+that retain a relevant document in the loaded corpus subset.
+
+Run benchmark comparisons on an otherwise idle machine. The suite deliberately
+uses one caller for insertion and search so library-internal behavior is being
+compared rather than different caller-side parallelization strategies.
 
 ## Design notes
 

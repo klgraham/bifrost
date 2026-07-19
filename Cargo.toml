@@ -8,6 +8,7 @@ documentation = "https://docs.rs/hnsw-rs"
 readme = "README.md"
 rust-version = "1.85"
 publish = false
+exclude = ["benchmarks/"]
 
 [dependencies]
 crc32fast = "1.5"
