@@ -16,11 +16,14 @@ pub struct Config {
     /// adjacency may become directed.
     pub m: u8,
     /// Candidate search width during insertion.
+    ///
+    /// Must be greater than zero. A stored value of `0` is rejected rather
+    /// than silently clamped during construction search.
     pub ef_construction: u16,
     /// Candidate search width during queries.
     ///
-    /// `search` uses `max(ef_search, k)` so a request larger than this value
-    /// still returns up to `k` hits.
+    /// Must be greater than zero. `search` uses `max(ef_search, k)` so a
+    /// request larger than this value still returns up to `k` hits.
     pub ef_search: u16,
     /// Highest level that may be assigned to a node.
     pub max_level: u8,
@@ -52,6 +55,14 @@ impl Config {
         }
         if self.m == 0 {
             return Err(Error::InvalidConfig("m must be greater than zero"));
+        }
+        if self.ef_construction == 0 {
+            return Err(Error::InvalidConfig(
+                "ef_construction must be greater than zero",
+            ));
+        }
+        if self.ef_search == 0 {
+            return Err(Error::InvalidConfig("ef_search must be greater than zero"));
         }
         if self.max_level == 0 || self.max_level == u8::MAX {
             return Err(Error::InvalidConfig("max_level must be between 1 and 254"));
@@ -138,6 +149,22 @@ mod tests {
         assert!(matches!(
             Config {
                 m: 0,
+                ..Config::default()
+            }
+            .validate(),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            Config {
+                ef_construction: 0,
+                ..Config::default()
+            }
+            .validate(),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            Config {
+                ef_search: 0,
                 ..Config::default()
             }
             .validate(),

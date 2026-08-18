@@ -252,7 +252,8 @@ fn main() -> Result<()> {
     }
 
     for ef_search in ef_searches {
-        ours.set_ef_search(ef_search as u16);
+        ours.set_ef_search(ef_search as u16)
+            .expect("benchmark ef_search values are validated before the run");
         usearch.change_expansion_search(ef_search);
 
         let ours_search = measure_search(queries, parameters.repetitions, |query| {

@@ -43,7 +43,7 @@ pub struct SearchHit {
 ///     ..Config::default()
 /// })?;
 /// index.insert(0, &[1.0, 0.0])?;
-/// index.set_ef_search(8);
+/// index.set_ef_search(8)?;
 /// assert_eq!(index.config().ef_search, 8);
 /// let _ = index.search(&[1.0, 0.0], 1)?;
 /// # Ok::<(), hnsw_rs::Error>(())
@@ -136,11 +136,15 @@ impl HnswIndex {
 
     /// Sets the layer-0 candidate width used by [`HnswIndex::search`].
     ///
-    /// [`HnswIndex::search_with_ef`] overrides this value for a single query
-    /// without mutating the stored config. Both methods still search with
-    /// `max(ef, k)`.
-    pub fn set_ef_search(&mut self, ef_search: u16) {
+    /// `ef_search` must be greater than zero. [`HnswIndex::search_with_ef`]
+    /// overrides this value for a single query without mutating the stored
+    /// config. Both methods still search with `max(ef, k)`.
+    pub fn set_ef_search(&mut self, ef_search: u16) -> Result<()> {
+        if ef_search == 0 {
+            return Err(Error::InvalidConfig("ef_search must be greater than zero"));
+        }
         self.config.ef_search = ef_search;
+        Ok(())
     }
 
     /// Sets the random-level stop probability used by later [`HnswIndex::insert`]
@@ -761,7 +765,7 @@ mod tests {
         .unwrap();
         let mut snapshot = index.config();
         snapshot.m = 1;
-        index.set_ef_search(8);
+        index.set_ef_search(8).unwrap();
         assert_eq!(snapshot.m, 1);
         assert_eq!(index.config().m, 4);
         assert_eq!(index.config().ef_search, 8);
@@ -853,6 +857,37 @@ mod tests {
     }
 
     #[test]
+    fn set_ef_search_rejects_zero() {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        assert!(matches!(
+            HnswIndex::new(Config {
+                dim: 2,
+                ef_construction: 0,
+                ..Config::default()
+            }),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            HnswIndex::new(Config {
+                dim: 2,
+                ef_search: 0,
+                ..Config::default()
+            }),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            index.set_ef_search(0),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(index.config().ef_search, Config::default().ef_search);
+    }
+
+    #[test]
     fn set_ef_search_applies_at_query_time() {
         let mut index = HnswIndex::new(Config {
             dim: 2,
@@ -868,7 +903,7 @@ mod tests {
             index.insert(id as u32, vector).unwrap();
         }
         assert_eq!(index.config().ef_search, 1);
-        index.set_ef_search(4);
+        index.set_ef_search(4).unwrap();
         assert_eq!(index.config().ef_search, 4);
         let hits = index.search(&[1.0, 0.0], 4).unwrap();
         assert_eq!(hits.len(), 4);

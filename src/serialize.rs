@@ -566,6 +566,9 @@ fn validate_header(header: &Header) -> Result<()> {
     if header.m == 0 {
         return Err(Error::InvalidFile("invalid neighbor count"));
     }
+    if header.ef_construction == 0 || header.ef_search == 0 {
+        return Err(Error::InvalidFile("invalid candidate search width"));
+    }
     if !header.level_mult.is_finite() || !(0.0..=1.0).contains(&header.level_mult) {
         return Err(Error::InvalidFile("invalid level multiplier"));
     }
@@ -1023,6 +1026,33 @@ mod tests {
             Err(Error::InvalidFile("invalid neighbor count"))
         ));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn zero_ef_header_is_rejected() {
+        let construction_path = temporary_file("zero-ef-construction");
+        save_file(&fixture_index(), &construction_path).unwrap();
+        let mut bytes = fs::read(&construction_path).unwrap();
+        bytes[14..16].copy_from_slice(&0_u16.to_le_bytes());
+        refresh_crc(&mut bytes);
+        fs::write(&construction_path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&construction_path),
+            Err(Error::InvalidFile("invalid candidate search width"))
+        ));
+        fs::remove_file(construction_path).unwrap();
+
+        let search_path = temporary_file("zero-ef-search");
+        save_file(&fixture_index(), &search_path).unwrap();
+        let mut bytes = fs::read(&search_path).unwrap();
+        bytes[16..18].copy_from_slice(&0_u16.to_le_bytes());
+        refresh_crc(&mut bytes);
+        fs::write(&search_path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&search_path),
+            Err(Error::InvalidFile("invalid candidate search width"))
+        ));
+        fs::remove_file(search_path).unwrap();
     }
 
     #[test]
