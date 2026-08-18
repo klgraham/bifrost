@@ -4,7 +4,9 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
     Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
-    layer::{Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding},
+    layer::{
+        Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -287,6 +289,7 @@ fn select_entry_point_for_level(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vector::cosine_distance;
 
     fn config(dim: u16) -> Config {
         Config {

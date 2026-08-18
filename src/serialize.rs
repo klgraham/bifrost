@@ -256,7 +256,7 @@ pub struct EdgeView<'a> {
     bytes: &'a [u8],
 }
 
-impl EdgeView<'_> {
+impl<'a> EdgeView<'a> {
     #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len() / 4
@@ -275,7 +275,7 @@ impl EdgeView<'_> {
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = NodeIndex> + '_ {
+    pub fn iter(self) -> impl ExactSizeIterator<Item = NodeIndex> + 'a {
         self.bytes
             .chunks_exact(4)
             .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four-byte edge element")))

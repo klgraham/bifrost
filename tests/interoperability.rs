@@ -68,7 +68,10 @@ fn loaded_fixture_search_matches_live_index() {
     let loaded = load_file(&path).unwrap();
     let live = fixture_index();
     let query = [0.9_f32, 0.1];
-    assert_eq!(loaded.search(&query, 3).unwrap(), live.search(&query, 3).unwrap());
+    assert_eq!(
+        loaded.search(&query, 3).unwrap(),
+        live.search(&query, 3).unwrap()
+    );
     assert_eq!(loaded.search(&[0.0, 1.0], 1).unwrap()[0].id, 200);
     drop(loaded);
     fs::remove_file(path).unwrap();
