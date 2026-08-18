@@ -528,20 +528,31 @@ mod tests {
 
     #[test]
     fn prune_does_not_remove_reverse_of_dropped_edge() {
+        const DIM: usize = 8;
         let config = Config {
-            dim: 2,
+            dim: DIM as u16,
             m: 2,
-            ef_construction: 16,
+            ef_construction: 32,
             max_level: 1,
             level_mult: 1.0,
             rng_seed: Some(1),
             ..Config::default()
         };
         let mut index = HnswIndex::new(config).unwrap();
-        index.insert(0, &[1.0, 0.0]).unwrap();
-        for id in 1..=10 {
-            let angle = 0.05 * id as f32;
-            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        let mut hub = vec![0.0; DIM];
+        hub[0] = 1.0;
+        index.insert(0, &hub).unwrap();
+        // Near-orthogonal perturbations keep every insert closer to the hub
+        // than to the other leaves, so reverse edges concentrate on node 0.
+        for id in 1..=12 {
+            let mut vector = vec![0.0; DIM];
+            vector[0] = 1.0;
+            vector[1 + ((id as usize - 1) % (DIM - 1))] = 0.02 * id as f32;
+            let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+            for value in &mut vector {
+                *value /= norm;
+            }
+            index.insert(id, &vector).unwrap();
         }
 
         let hub_neighbors = index.graph.edges(0, 0);
@@ -550,7 +561,7 @@ mod tests {
             .find(|&node| !hub_neighbors.contains(&node) && index.graph.has_edge(0, node, 0));
         assert!(
             dropped.is_some(),
-            "expected a dropped peer that still points at the hub"
+            "expected a dropped peer that still points at the hub; hub neighbors={hub_neighbors:?}"
         );
     }
 
