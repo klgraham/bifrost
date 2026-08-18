@@ -8,6 +8,8 @@
   most `2M` on layer 0 (`Mmax0`) and `M` on upper layers (`Mmax`). Dropped
   reverse edges stay directed: the peer keeps its link.
 - Reject `m == 0` in `Config::validate` and `.hnsw` headers.
+- Reject `ef_construction == 0` and `ef_search == 0` in `Config::validate`,
+  `.hnsw` headers, and `HnswIndex::set_ef_search` instead of clamping to 1.
 - Keep `HnswIndex` construction parameters private; expose `config()`,
   `set_ef_search`, and `set_level_mult` so prune caps cannot change mid-index.
 - Keep the construction graph private; expose `graph()`, `edges`, `node`,
@@ -58,7 +60,9 @@
 - Reverse-link pruning caps outgoing degree at `2M` (layer 0) and `M` (upper
   layers) and leaves the opposite directed edge in place.
 - `Config::max_degree` and `Config::new_node_neighbors` expose those derived
-  limits. `Config::m` must be greater than zero.
-- `HnswIndex::config` returns a copy; `set_ef_search` updates query width.
+  limits. `Config::m`, `Config::ef_construction`, and `Config::ef_search` must
+  be greater than zero.
+- `HnswIndex::config` returns a copy; `set_ef_search` updates query width and
+  rejects `0`.
 - `HnswIndex::graph` is a shared reference; `edges`, `node`, `layer_count`,
   `has_edge`, and `degree` inspect adjacency without allowing replacement.
