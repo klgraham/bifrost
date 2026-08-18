@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Default `level_mult` to `1.0 - 1.0 / m` (`Config::level_mult_for_m`) so
+  `Config::default()` matches the HNSW paper, hnswlib, and the competitor
+  benchmark crate (`P(level >= L) = m^{-L}`). Existing snapshots that stored
+  `0.5` still load.
 - Write `.hnsw` snapshots through the same temp + `sync_all` + `rename` path
   as v2→v3 migration, so a crash mid-save cannot truncate a previous good
   file. Leftover `.{name}.tmp-{pid}-{nonce}` files do not block a later save.
@@ -72,6 +76,9 @@
 - Neighbor selection uses the diversity heuristic for both insert and prune.
 - Reverse-link pruning caps outgoing degree at `2M` (layer 0) and `M` (upper
   layers) and leaves the opposite directed edge in place.
+- `Config::default` sets `level_mult` to `1.0 - 1.0 / m`. Snapshots may still
+  store any finite value in `[0, 1]`.
+- `Config::level_mult_for_m` returns the paper / hnswlib stop probability.
 - `Config::max_degree` and `Config::new_node_neighbors` expose those derived
   limits. `Config::m`, `Config::ef_construction`, and `Config::ef_search` must
   be greater than zero.

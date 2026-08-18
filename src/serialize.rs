@@ -808,6 +808,7 @@ mod tests {
             ef_construction: 200,
             ef_search: 100,
             max_level: 16,
+            // Historical default; still a valid stored value.
             level_mult: 0.5,
             entry_point: 3,
             entry_level: 2,
