@@ -12,7 +12,9 @@
 //! returns [`Error::InvalidVector`] for the same failures. Public
 //! [`vector::dot`], [`vector::cosine_distance`], and
 //! [`vector::cosine_similarity`] return [`Error::DimensionMismatch`] when
-//! the arguments have different lengths.
+//! the arguments have different lengths. [`HnswIndex::build`] assigns IDs
+//! `0..n-1` and is a convenience for an empty index; a second `build` or any
+//! colliding ID returns [`Error::DuplicateExternalId`].
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
