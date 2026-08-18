@@ -131,11 +131,27 @@ impl LoadedHnsw {
         })
     }
 
+    /// Memory-maps and validates a `.hnsw` snapshot for query-only search.
+    ///
+    /// This is the primary constructor; [`load_file`] is the same function.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        load_file(path)
+    }
+
     /// Searches the mapped snapshot for at most `k` nearest neighbors.
     ///
-    /// Uses the stored graph, vectors, entry point, and `ef_search` without
-    /// copying the index into an owned [`HnswIndex`].
+    /// Uses the stored `ef_search`, expanded to `max(ef_search, k)` so a
+    /// request larger than the saved candidate width still returns up to `k`
+    /// hits. Call [`LoadedHnsw::search_with_ef`] to override the stored width.
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
+        self.search_with_ef(query, k, self.header.ef_search)
+    }
+
+    /// Searches using an explicit layer-0 candidate width.
+    ///
+    /// The search width is `max(ef, k)`. The graph and vectors stay mapped;
+    /// nothing is copied into an owned [`HnswIndex`].
+    pub fn search_with_ef(&self, query: &[f32], k: usize, ef: u16) -> Result<Vec<SearchHit>> {
         self.check_dimension(query)?;
         let store = MappedVectors {
             loaded: self,
@@ -147,7 +163,7 @@ impl LoadedHnsw {
             &store,
             query,
             k,
-            self.header.ef_search,
+            ef,
             entry_point,
             self.header.entry_level,
         )?;
@@ -302,15 +318,15 @@ impl SearchGraph for LoadedHnsw {
 }
 
 impl SearchVectors for MappedVectors<'_> {
-    fn distance(&self, node_index: NodeIndex, query: &[f32]) -> f32 {
-        let view = self
-            .loaded
-            .vector(node_index)
-            .expect("search candidates refer to existing vectors");
+    fn distance(&self, node_index: NodeIndex, query: &[f32]) -> Result<f32> {
+        let Some(view) = self.loaded.vector(node_index) else {
+            return Err(Error::InvalidNode(node_index));
+        };
         let mut scratch = self.scratch.borrow_mut();
-        view.copy_into(&mut scratch)
-            .expect("mapped vector length matches the snapshot dimension");
-        cosine_distance(&scratch, query)
+        view.copy_into(&mut scratch).ok_or(Error::InvalidFile(
+            "mapped vector length does not match dim",
+        ))?;
+        Ok(cosine_distance(&scratch, query))
     }
 }
 
@@ -357,8 +373,8 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
 
 /// Memory-maps a `.hnsw` file and validates magic, version, CRC, and layout.
 ///
-/// The returned [`LoadedHnsw`] can be searched in place. Valid v2 files are
-/// rewritten to v3 before the mapping is returned.
+/// Equivalent to [`LoadedHnsw::open`]. The mapping can be searched in place.
+/// Valid v2 files are rewritten to v3 before the mapping is returned.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
     let path = path.as_ref();
     loop {
@@ -582,6 +598,16 @@ fn validate(data: &[u8], header: &Header, sections: &Sections) -> Result<()> {
         }
     }
 
+    if header.node_count > 0 {
+        let start = sections.nodes.start + header.entry_point as usize * NODE_META_SIZE;
+        let entry = read_node(&data[start..start + NODE_META_SIZE]);
+        if entry.level < header.entry_level {
+            return Err(Error::InvalidFile(
+                "entry point does not exist at entry_level",
+            ));
+        }
+    }
+
     let edge_count = sections.edges.len() / 4;
     for level in 0..layer_count {
         for node_index in 0..node_count {
@@ -771,6 +797,23 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
+    fn four_node_index(ef_search: u16) -> HnswIndex {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            ef_search,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
+            .iter()
+            .enumerate()
+        {
+            index.insert(id as u32, vector).unwrap();
+        }
+        index
+    }
+
     #[test]
     fn save_load_search_matches_live_index() {
         let path = temporary_file("search-round-trip");
@@ -791,6 +834,23 @@ mod tests {
                 actual: 1
             })
         ));
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn loaded_search_returns_k_when_larger_than_ef_search() {
+        let path = temporary_file("search-k-gt-ef");
+        let index = four_node_index(2);
+        let live = index.search(&[1.0, 0.0], 4).unwrap();
+        assert_eq!(live.len(), 4);
+        index.save(&path).unwrap();
+
+        let loaded = LoadedHnsw::open(&path).unwrap();
+        assert_eq!(loaded.search(&[1.0, 0.0], 4).unwrap().len(), 4);
+        assert_eq!(loaded.search(&[1.0, 0.0], 4).unwrap(), live);
+        assert_eq!(loaded.search_with_ef(&[1.0, 0.0], 4, 2).unwrap(), live);
+        assert_eq!(loaded.search_with_ef(&[1.0, 0.0], 1, 2).unwrap().len(), 1);
         drop(loaded);
         fs::remove_file(path).unwrap();
     }
@@ -943,6 +1003,27 @@ mod tests {
             Err(Error::InvalidFile(_))
         ));
         fs::remove_file(truncated_path).unwrap();
+    }
+
+    #[test]
+    fn entry_point_below_entry_level_is_rejected() {
+        let path = temporary_file("low-entry");
+        save_file(&fixture_index(), &path).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        let header = decode_header(&bytes[..HEADER_SIZE]);
+        assert!(header.entry_level > 0);
+        let nodes = HEADER_SIZE + header.node_count as usize * usize::from(header.dim) * 4;
+        let entry = nodes + header.entry_point as usize * NODE_META_SIZE;
+        bytes[entry + 4] = header.entry_level.saturating_sub(1);
+        refresh_crc(&mut bytes);
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&path),
+            Err(Error::InvalidFile(
+                "entry point does not exist at entry_level"
+            ))
+        ));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

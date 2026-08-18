@@ -140,6 +140,10 @@ impl HnswIndex {
     }
 
     /// Searches for at most `k` nearest neighbors to a normalized query vector.
+    ///
+    /// Layer 0 uses a candidate width of `max(ef_search, k)`, matching HNSW /
+    /// hnswlib, so asking for more hits than [`Config::ef_search`] still
+    /// returns up to `k` results when the graph contains them.
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
         self.check_dimension(query)?;
         let store = self.vector_store();
@@ -172,11 +176,11 @@ impl HnswIndex {
 
     /// Memory-maps a previously saved `.hnsw` snapshot for query-only search.
     ///
-    /// The returned [`LoadedHnsw`] keeps the file mapped and can
-    /// [`LoadedHnsw::search`] without reconstructing the mutable index.
-    /// Further inserts still require a live [`HnswIndex`].
+    /// Prefer [`LoadedHnsw::open`] or [`crate::load_file`]; this is the same
+    /// mapping constructor and does **not** rebuild a mutable [`HnswIndex`].
+    /// Further inserts still require a live builder.
     pub fn load(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
-        crate::serialize::load_file(path)
+        LoadedHnsw::open(path)
     }
 
     #[must_use]
@@ -412,6 +416,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn search_returns_k_when_larger_than_ef_search() {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            ef_search: 2,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
+            .iter()
+            .enumerate()
+        {
+            index.insert(id as u32, vector).unwrap();
+        }
+        let hits = index.search(&[1.0, 0.0], 4).unwrap();
+        assert_eq!(hits.len(), 4);
     }
 
     #[test]

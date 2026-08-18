@@ -10,6 +10,9 @@ pub struct Config {
     /// Candidate search width during insertion.
     pub ef_construction: u16,
     /// Candidate search width during queries.
+    ///
+    /// `search` uses `max(ef_search, k)` so a request larger than this value
+    /// still returns up to `k` hits.
     pub ef_search: u16,
     /// Highest level that may be assigned to a node.
     pub max_level: u8,

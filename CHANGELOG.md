@@ -3,8 +3,12 @@
 ## Unreleased
 
 - Add query-only search on a memory-mapped `.hnsw` snapshot via
-  `LoadedHnsw::search` and `HnswIndex::load`, so a saved index can be queried
-  without re-inserting every vector.
+  `LoadedHnsw::search`, `LoadedHnsw::search_with_ef`, `LoadedHnsw::open`, and
+  `load_file`, so a saved index can be queried without re-inserting every
+  vector.
+- Search uses `max(ef_search, k)` so requesting more neighbors than the
+  configured candidate width still returns up to `k` hits.
+- Reject snapshots whose entry node does not exist at `entry_level`.
 
 ## 0.2.0 - 2026-07-18
 
@@ -33,5 +37,6 @@
 - Search results are owned `Vec<SearchHit>` values.
 - Mmap accessors decode checked little-endian views rather than exposing typed
   slices cast directly from file bytes.
-- `LoadedHnsw::search` and `HnswIndex::load` query a saved snapshot without
+- `LoadedHnsw::search` / `LoadedHnsw::open` query a saved snapshot without
   reconstructing a mutable index.
+- Search candidate width is `max(ef_search, k)`.
