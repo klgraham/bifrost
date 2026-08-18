@@ -206,6 +206,10 @@ impl HnswIndex {
     /// pruning returns an error, the caller can retry the same ID: the node is
     /// not visible to [`HnswIndex::search`], and adjacency matches the
     /// pre-insert graph (including lists that prune had already rewritten).
+    ///
+    /// The graph may hold [`u32::MAX`] nodes (`0..=u32::MAX - 1`). A further
+    /// insert returns [`Error::CapacityExceeded`]. Index [`u32::MAX`] is
+    /// unused so [`Graph::node_count`] and the on-disk header stay exact.
     pub fn insert(&mut self, id: ExternalId, vector: &[f32]) -> Result<()> {
         self.check_vector(vector)?;
         if self.external_to_internal.contains_key(&id) {

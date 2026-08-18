@@ -44,15 +44,23 @@ impl Graph {
 
     /// Converts a node-list length to [`NodeIndex`] without panicking.
     ///
-    /// Insertion rejects lengths at [`u32::MAX`], so a well-formed graph always
-    /// fits. If that cap is bypassed, the count saturates instead of panicking
-    /// on the public [`Graph::node_count`] accessor.
+    /// Insertion rejects a further node when `len` is already [`u32::MAX`], so
+    /// a well-formed graph has at most that many nodes (`0..=u32::MAX - 1`)
+    /// and [`Graph::node_count`] stays exact. If that cap is bypassed, the
+    /// count saturates instead of panicking on the public accessor.
     #[must_use]
     pub(crate) fn node_index_from_len(len: usize) -> NodeIndex {
         u32::try_from(len).unwrap_or(u32::MAX)
     }
 
-    /// `true` when another insert would overflow the on-disk `u32` node index.
+    /// `true` when another insert cannot keep the node count in [`u32`].
+    ///
+    /// `len` is the next [`NodeIndex`]. `len == u32::MAX` already holds
+    /// indices `0..=u32::MAX - 1`; that further insert is rejected. Index
+    /// [`u32::MAX`] is unused because the resulting count would be `2^32`,
+    /// which does not fit in [`Graph::node_count`] or the on-disk header,
+    /// and search sizes the visited list from that count so the extra node
+    /// would be skipped.
     #[must_use]
     pub(crate) fn node_len_at_u32_cap(len: usize) -> bool {
         len >= u32::MAX as usize
@@ -228,8 +236,9 @@ impl Graph {
 
     /// Number of nodes in the construction graph.
     ///
-    /// The value fits in [`NodeIndex`] after a successful insert. If the `u32`
-    /// cap is bypassed, this saturates at [`u32::MAX`] instead of panicking.
+    /// After a successful insert the value is exact and at most [`u32::MAX`]
+    /// (indices `0..=u32::MAX - 1`). If the `u32` cap is bypassed, this
+    /// saturates at [`u32::MAX`] instead of panicking.
     #[must_use]
     pub fn node_count(&self) -> NodeIndex {
         Self::node_index_from_len(self.node_data.len())
@@ -367,6 +376,18 @@ mod tests {
             assert!(Graph::node_len_at_u32_cap(over));
         }
 
+        // Last legal NodeIndex (`u32::MAX - 1`) is usable: `len == u32::MAX`
+        // is a full graph (`0..=u32::MAX - 1`). Index `u32::MAX` is unused
+        // so the u32 count stays exact (see `node_len_at_u32_cap`).
+        assert_eq!(
+            Graph::node_index_from_len(u32::MAX as usize - 1),
+            u32::MAX - 1
+        );
+        Graph::check_insert_node(u32::MAX as usize - 1, u32::MAX - 1).unwrap();
+        assert!(matches!(
+            Graph::check_insert_node(u32::MAX as usize, u32::MAX),
+            Err(Error::CapacityExceeded("node count"))
+        ));
         assert!(matches!(
             Graph::check_insert_node(u32::MAX as usize, 0),
             Err(Error::CapacityExceeded("node count"))

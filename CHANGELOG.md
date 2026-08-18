@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The node-capacity check accepts the last legal `NodeIndex`
+  (`u32::MAX - 1`), so a graph may hold `u32::MAX` nodes. Index `u32::MAX`
+  is unused: a count of `2^32` cannot be stored in `Graph::node_count` or
+  the on-disk header, and search sizes the visited list from that count.
+  Unit tests cover that fencepost without allocating.
 - `Graph::node_count` no longer `expect`s if the `u32` insertion cap is
   bypassed. `insert_node` returns `Error::CapacityExceeded` at that length,
   and the public count saturates at `u32::MAX`.
