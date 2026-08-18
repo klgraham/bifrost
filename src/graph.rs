@@ -17,13 +17,16 @@ pub struct NodeMeta {
 /// mutation methods here are crate-private so external callers cannot desync
 /// adjacency from vectors.
 ///
-/// Adjacency lists are directed. Insertion adds both directions, then reverse
-/// links are pruned on the neighbor only, so a dropped `A → B` edge can leave
-/// `B → A` in place.
+/// Adjacency lists are directed. Insertion adds both directed edges atomically
+/// (a reverse-edge failure undoes the forward write), then reverse links are
+/// pruned on the neighbor only, so a dropped `A → B` edge can leave `B → A`
+/// in place.
 #[derive(Clone, Debug, Default)]
 pub struct Graph {
     pub(crate) node_data: Vec<NodeMeta>,
     construction_layers: Vec<Vec<Vec<NodeIndex>>>,
+    #[cfg(test)]
+    fail_add_edge_from: Option<NodeIndex>,
 }
 
 impl Graph {
@@ -78,7 +81,7 @@ impl Graph {
         level: u8,
         source: NodeIndex,
         destination: NodeIndex,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(source_meta) = self.node(source) else {
             return Err(Error::InvalidNode(source));
         };
@@ -91,22 +94,74 @@ impl Graph {
         let Some(layer) = self.construction_layers.get_mut(usize::from(level)) else {
             return Err(Error::InvalidLayer(level));
         };
-        let edges = &mut layer[source as usize];
-        match edges.binary_search(&destination) {
-            Ok(_) => {}
-            Err(position) => edges.insert(position, destination),
+        #[cfg(test)]
+        if self.fail_add_edge_from == Some(source) {
+            self.fail_add_edge_from = None;
+            return Err(Error::InvalidNode(source));
         }
-        Ok(())
+        let edges = &mut layer[source as usize];
+        Ok(match edges.binary_search(&destination) {
+            Ok(_) => false,
+            Err(position) => {
+                edges.insert(position, destination);
+                true
+            }
+        })
     }
 
+    pub(crate) fn remove_edge(&mut self, level: u8, source: NodeIndex, destination: NodeIndex) {
+        let Some(layer) = self.construction_layers.get_mut(usize::from(level)) else {
+            return;
+        };
+        let Some(edges) = layer.get_mut(source as usize) else {
+            return;
+        };
+        if let Ok(position) = edges.binary_search(&destination) {
+            edges.remove(position);
+        }
+    }
+
+    /// Adds both directed edges, or neither if the reverse write fails.
     pub(crate) fn add_bidirectional_edge(
         &mut self,
         level: u8,
         left: NodeIndex,
         right: NodeIndex,
     ) -> Result<()> {
-        self.add_edge(level, left, right)?;
-        self.add_edge(level, right, left)
+        let added_forward = self.add_edge(level, left, right)?;
+        match self.add_edge(level, right, left) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if added_forward {
+                    self.remove_edge(level, left, right);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Replaces an adjacency list without re-validating neighbors.
+    ///
+    /// Used to restore a snapshot taken before insert mutations. `edges` must
+    /// already be sorted and unique.
+    pub(crate) fn replace_edges(&mut self, level: u8, source: NodeIndex, edges: Vec<NodeIndex>) {
+        let Some(layer) = self.construction_layers.get_mut(usize::from(level)) else {
+            return;
+        };
+        let Some(slot) = layer.get_mut(source as usize) else {
+            return;
+        };
+        *slot = edges;
+    }
+
+    /// Drops the most recently inserted node and any layers allocated for it.
+    pub(crate) fn pop_last_node(&mut self, previous_layer_count: u8) {
+        let _ = self.node_data.pop();
+        for layer in &mut self.construction_layers {
+            let _ = layer.pop();
+        }
+        self.construction_layers
+            .truncate(usize::from(previous_layer_count));
     }
 
     pub(crate) fn set_edges(
@@ -229,5 +284,45 @@ mod tests {
             graph.set_edges(0, 0, [5]),
             Err(Error::InvalidNode(5))
         ));
+    }
+
+    #[test]
+    fn bidirectional_edge_is_atomic_when_reverse_fails() {
+        let mut graph = Graph::new();
+        graph.insert_node(0, 10, 0, 0).unwrap();
+        graph.insert_node(1, 11, 0, 1).unwrap();
+        graph.fail_add_edge_from = Some(1);
+        assert!(matches!(
+            graph.add_bidirectional_edge(0, 0, 1),
+            Err(Error::InvalidNode(1))
+        ));
+        assert!(!graph.has_edge(0, 0, 1));
+        assert!(!graph.has_edge(0, 1, 0));
+        assert_eq!(graph.fail_add_edge_from, None);
+
+        graph.add_edge(0, 0, 1).unwrap();
+        graph.fail_add_edge_from = Some(1);
+        assert!(matches!(
+            graph.add_bidirectional_edge(0, 0, 1),
+            Err(Error::InvalidNode(1))
+        ));
+        assert!(
+            graph.has_edge(0, 0, 1),
+            "pre-existing forward edge must survive undo"
+        );
+        assert!(!graph.has_edge(0, 1, 0));
+    }
+
+    #[test]
+    fn pop_last_node_restores_layer_count() {
+        let mut graph = Graph::new();
+        graph.insert_node(0, 10, 0, 0).unwrap();
+        graph.insert_node(1, 11, 3, 1).unwrap();
+        assert_eq!(graph.layer_count(), 4);
+        graph.pop_last_node(1);
+        assert_eq!(graph.node_count(), 1);
+        assert_eq!(graph.layer_count(), 1);
+        assert_eq!(graph.node(0).unwrap().external_id, 10);
+        assert!(graph.node(1).is_none());
     }
 }

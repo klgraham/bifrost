@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make `insert` transactional after the node is appended: a failed link or
+  reverse-link prune restores adjacency, drops the isolated node, and leaves
+  the external ID free to retry. `add_bidirectional_edge` is atomic.
 - Select new-node neighbors and prune reverse edges with the paper / hnswlib
   diversity heuristic (Alg. 4), not simple nearest-`M`.
 - Prune reverse edges after insertion so a node's outgoing degree stays at
@@ -66,3 +69,5 @@
   rejects `0`.
 - `HnswIndex::graph` is a shared reference; `edges`, `node`, `layer_count`,
   `has_edge`, and `degree` inspect adjacency without allowing replacement.
+- `HnswIndex::insert` is transactional: failure after the node is appended
+  rolls back storage, adjacency (including prune), and the external-ID map.

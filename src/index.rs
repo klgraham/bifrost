@@ -81,6 +81,10 @@ pub struct HnswIndex {
     pub(crate) entry_point: Option<NodeIndex>,
     pub(crate) entry_level: u8,
     rng: StdRng,
+    #[cfg(test)]
+    fail_insert_after_append: bool,
+    #[cfg(test)]
+    fail_insert_after_first_link: bool,
 }
 
 pub(crate) fn hits_from_candidates<G: SearchGraph>(
@@ -121,6 +125,10 @@ impl HnswIndex {
             rng: config
                 .rng_seed
                 .map_or_else(rand::make_rng, StdRng::seed_from_u64),
+            #[cfg(test)]
+            fail_insert_after_append: false,
+            #[cfg(test)]
+            fail_insert_after_first_link: false,
         })
     }
 
@@ -165,6 +173,11 @@ impl HnswIndex {
     /// the paper / hnswlib diversity heuristic. Each reverse link is then
     /// pruned with the same selector, so a dropped outgoing edge can remain as
     /// an incoming edge on the peer.
+    ///
+    /// Insertion is transactional. If greedy descent, linking, or reverse-link
+    /// pruning returns an error, the caller can retry the same ID: the node is
+    /// not visible to [`HnswIndex::search`], and adjacency matches the
+    /// pre-insert graph (including lists that prune had already rewritten).
     pub fn insert(&mut self, id: ExternalId, vector: &[f32]) -> Result<()> {
         self.check_dimension(vector)?;
         if self.external_to_internal.contains_key(&id) {
@@ -184,13 +197,38 @@ impl HnswIndex {
             .ok_or(Error::CapacityExceeded("vector data"))?;
 
         let level = random_level(&mut self.rng, self.config.max_level, self.config.level_mult);
+        let mut rollback = InsertRollback::capture(self, id);
+        match self.insert_committed(id, vector, node_index, level, vector_offset, &mut rollback) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                rollback.restore(self);
+                Err(error)
+            }
+        }
+    }
+
+    fn insert_committed(
+        &mut self,
+        id: ExternalId,
+        vector: &[f32],
+        node_index: NodeIndex,
+        level: u8,
+        vector_offset: u32,
+        rollback: &mut InsertRollback,
+    ) -> Result<()> {
         self.vector_data.extend_from_slice(vector);
         self.vector_offsets.push(vector_offset);
         self.graph
             .insert_node(node_index, id, level, vector_offset)?;
-        self.external_to_internal.insert(id, node_index);
+
+        #[cfg(test)]
+        if self.fail_insert_after_append {
+            self.fail_insert_after_append = false;
+            return Err(Error::InvalidNode(node_index));
+        }
 
         let Some(mut entry_point) = self.entry_point else {
+            self.external_to_internal.insert(id, node_index);
             self.entry_point = Some(node_index);
             self.entry_level = level;
             return Ok(());
@@ -216,6 +254,7 @@ impl HnswIndex {
                 current_level,
                 required_entry_level,
                 vector,
+                rollback,
             )?;
             if current_level == 0 {
                 break;
@@ -223,6 +262,7 @@ impl HnswIndex {
             current_level -= 1;
         }
 
+        self.external_to_internal.insert(id, node_index);
         if level > previous_entry_level {
             self.entry_point = Some(node_index);
             self.entry_level = level;
@@ -369,6 +409,7 @@ impl HnswIndex {
         level: u8,
         required_entry_level: u8,
         vector: &[f32],
+        rollback: &mut InsertRollback,
     ) -> Result<NodeIndex> {
         let max_neighbors = usize::from(self.config.new_node_neighbors(level));
         let candidates = {
@@ -389,9 +430,16 @@ impl HnswIndex {
             select_neighbors_heuristic(&store, &candidates, max_neighbors)
         };
         for candidate in selected {
+            rollback.record(&self.graph, level, node_index);
+            rollback.record(&self.graph, level, candidate.node_index);
             self.graph
                 .add_bidirectional_edge(level, node_index, candidate.node_index)?;
             self.prune_neighbors(level, candidate.node_index)?;
+            #[cfg(test)]
+            if self.fail_insert_after_first_link {
+                self.fail_insert_after_first_link = false;
+                return Err(Error::InvalidNode(candidate.node_index));
+            }
         }
         Ok(select_entry_point_for_level(
             &self.graph,
@@ -424,6 +472,52 @@ impl HnswIndex {
             .into_iter()
             .map(|candidate| candidate.node_index);
         self.graph.set_edges(level, node_index, kept)
+    }
+}
+
+/// Snapshots index state so a failed insert can restore adjacency, storage,
+/// and the external-ID map after the node has already been appended.
+struct InsertRollback {
+    id: ExternalId,
+    vector_len: usize,
+    node_count: usize,
+    layer_count: u8,
+    entry_point: Option<NodeIndex>,
+    entry_level: u8,
+    previous_edges: HashMap<(u8, NodeIndex), Vec<NodeIndex>>,
+}
+
+impl InsertRollback {
+    fn capture(index: &HnswIndex, id: ExternalId) -> Self {
+        Self {
+            id,
+            vector_len: index.vector_data.len(),
+            node_count: index.graph.node_data.len(),
+            layer_count: index.graph.layer_count(),
+            entry_point: index.entry_point,
+            entry_level: index.entry_level,
+            previous_edges: HashMap::new(),
+        }
+    }
+
+    fn record(&mut self, graph: &Graph, level: u8, node: NodeIndex) {
+        self.previous_edges
+            .entry((level, node))
+            .or_insert_with(|| graph.edges(level, node).to_vec());
+    }
+
+    fn restore(self, index: &mut HnswIndex) {
+        for ((level, node), edges) in self.previous_edges {
+            index.graph.replace_edges(level, node, edges);
+        }
+        if index.graph.node_data.len() > self.node_count {
+            index.graph.pop_last_node(self.layer_count);
+        }
+        index.vector_data.truncate(self.vector_len);
+        index.vector_offsets.truncate(self.node_count);
+        index.external_to_internal.remove(&self.id);
+        index.entry_point = self.entry_point;
+        index.entry_level = self.entry_level;
     }
 }
 
@@ -924,6 +1018,168 @@ mod tests {
             index.search(&[1.0], 1),
             Err(Error::DimensionMismatch { .. })
         ));
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct IndexSnapshot {
+        len: usize,
+        entry_point: Option<NodeIndex>,
+        entry_level: u8,
+        ids: Vec<ExternalId>,
+        mapping: HashMap<ExternalId, NodeIndex>,
+        edges: Vec<(u8, NodeIndex, Vec<NodeIndex>)>,
+        vectors: Vec<f32>,
+        offsets: Vec<u32>,
+    }
+
+    fn snapshot(index: &HnswIndex) -> IndexSnapshot {
+        let edges = (0..index.len() as NodeIndex)
+            .flat_map(|node| {
+                let top = index.node(node).map_or(0, |meta| meta.level);
+                (0..=top).map(move |level| (level, node, index.edges(level, node).to_vec()))
+            })
+            .collect();
+        IndexSnapshot {
+            len: index.len(),
+            entry_point: index.entry_point,
+            entry_level: index.entry_level,
+            ids: index
+                .graph
+                .node_data
+                .iter()
+                .map(|node| node.external_id)
+                .collect(),
+            mapping: index.external_to_internal.clone(),
+            edges,
+            vectors: index.vector_data.clone(),
+            offsets: index.vector_offsets.clone(),
+        }
+    }
+
+    fn assert_id_absent(index: &HnswIndex, id: ExternalId) {
+        assert!(!index.external_to_internal.contains_key(&id));
+        assert!(
+            index
+                .graph
+                .node_data
+                .iter()
+                .all(|node| node.external_id != id)
+        );
+        let hits = index.search(&[1.0, 0.0], index.len().max(1)).unwrap();
+        assert!(hits.iter().all(|hit| hit.id != id));
+    }
+
+    #[test]
+    fn failed_first_insert_leaves_empty_index() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.fail_insert_after_append = true;
+        assert!(matches!(
+            index.insert(1, &[1.0, 0.0]),
+            Err(Error::InvalidNode(_))
+        ));
+        assert!(index.is_empty());
+        assert!(index.entry_point.is_none());
+        assert!(index.external_to_internal.is_empty());
+        index.insert(1, &[1.0, 0.0]).unwrap();
+        assert_eq!(index.search(&[1.0, 0.0], 1).unwrap()[0].id, 1);
+    }
+
+    #[test]
+    fn failed_insert_after_append_can_be_retried() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        index.insert(1, &[0.0, 1.0]).unwrap();
+        let before = snapshot(&index);
+
+        index.fail_insert_after_append = true;
+        assert!(matches!(
+            index.insert(7, &[0.7, 0.7]),
+            Err(Error::InvalidNode(_))
+        ));
+        assert_eq!(snapshot(&index), before);
+        assert_id_absent(&index, 7);
+
+        index.insert(7, &[0.7, 0.7]).unwrap();
+        assert_eq!(index.search(&[0.7, 0.7], 1).unwrap()[0].id, 7);
+        assert_eq!(index.len(), before.len + 1);
+    }
+
+    #[test]
+    fn failed_descent_rolls_back_appended_node() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        let before = snapshot(&index);
+        index.entry_point = Some(99);
+        assert!(matches!(
+            index.insert(1, &[0.0, 1.0]),
+            Err(Error::InvalidNode(99))
+        ));
+        assert_eq!(index.len(), before.len);
+        assert_eq!(index.vector_data, before.vectors);
+        assert_eq!(index.external_to_internal, before.mapping);
+        assert!(!index.external_to_internal.contains_key(&1));
+        assert!(
+            index
+                .graph
+                .node_data
+                .iter()
+                .all(|node| node.external_id != 1)
+        );
+        assert_eq!(index.entry_point, Some(99));
+
+        index.entry_point = before.entry_point;
+        index.insert(1, &[0.0, 1.0]).unwrap();
+        assert_eq!(index.search(&[0.0, 1.0], 1).unwrap()[0].id, 1);
+    }
+
+    #[test]
+    fn failed_insert_after_prune_restores_adjacency() {
+        let mut index = heuristic_index();
+        index.insert(0, &unit_at(0.0)).unwrap();
+        index.insert(1, &unit_at(5.0)).unwrap();
+        index.insert(2, &unit_at(6.0)).unwrap();
+        index.insert(3, &unit_at(7.0)).unwrap();
+        index.insert(4, &unit_at(8.0)).unwrap();
+        let before = snapshot(&index);
+
+        index.fail_insert_after_first_link = true;
+        assert!(matches!(
+            index.insert(9, &unit_at(-30.0)),
+            Err(Error::InvalidNode(_))
+        ));
+        assert_eq!(snapshot(&index), before);
+        assert_id_absent(&index, 9);
+
+        index.insert(9, &unit_at(-30.0)).unwrap();
+        assert!(
+            index
+                .search(&unit_at(-30.0), 1)
+                .unwrap()
+                .iter()
+                .any(|hit| hit.id == 9)
+        );
+        assert!(index.degree(0, 0) <= index.config().max_degree(0));
+    }
+
+    #[test]
+    fn failed_reverse_edge_does_not_leave_one_sided_link() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        index.insert(1, &[0.0, 1.0]).unwrap();
+        let before = snapshot(&index);
+
+        index.graph.fail_add_edge_from = Some(0);
+        assert!(matches!(
+            index.insert(2, &[0.7, 0.7]),
+            Err(Error::InvalidNode(0))
+        ));
+        assert_eq!(snapshot(&index), before);
+        assert_id_absent(&index, 2);
+        assert!(!index.has_edge(0, 0, 2));
+        assert!(!index.has_edge(0, 2, 0));
+
+        index.insert(2, &[0.7, 0.7]).unwrap();
+        assert_eq!(index.search(&[0.7, 0.7], 1).unwrap()[0].id, 2);
     }
 
     fn deterministic_unit_vector(seed: usize, dim: usize) -> Vec<f32> {

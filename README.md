@@ -43,6 +43,8 @@ assert_eq!(hits[0].id, 100);
 
 `insert` and `search` return a dimension error instead of panicking when a
 slice does not match `Config::dim`. Duplicate external IDs are rejected.
+`insert` is all-or-nothing: a failure after the node is appended does not
+consume the ID, leave the node visible to search, or keep a one-sided edge.
 `Config::m`, `Config::ef_construction`, and `Config::ef_search` must be greater
 than zero. Construction parameters are captured at `HnswIndex::new`; `config()`
 returns a copy, and `set_ef_search` is the supported way to change the query
