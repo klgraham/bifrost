@@ -10,7 +10,12 @@ pub struct NodeMeta {
     pub vector_offset: u32,
 }
 
-/// Mutable per-layer graph used while constructing an index.
+/// Per-layer graph used while constructing an index.
+///
+/// Inspect a live index through [`crate::HnswIndex::graph`] or the index's
+/// read-only accessors. The graph stored on an index cannot be replaced, and
+/// mutation methods here are crate-private so external callers cannot desync
+/// adjacency from vectors.
 ///
 /// Adjacency lists are directed. Insertion adds both directions, then reverse
 /// links are pruned on the neighbor only, so a dropped `A → B` edge can leave

@@ -342,7 +342,7 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
         magic: MAGIC,
         version: VERSION,
         dim: config.dim,
-        node_count: index.graph.node_count(),
+        node_count: index.graph().node_count(),
         m: config.m,
         ef_construction: config.ef_construction,
         ef_search: config.ef_search,
@@ -350,7 +350,7 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
         level_mult: config.level_mult,
         entry_point: index.entry_point.unwrap_or(0),
         entry_level: index.entry_level,
-        layer_count: index.graph.layer_count(),
+        layer_count: index.layer_count(),
         reserved: [0; 24],
     };
     header.reserved[..4].copy_from_slice(&hasher.finalize().to_le_bytes());
@@ -361,7 +361,7 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     for &value in &index.vector_data {
         writer.write_all(&value.to_bits().to_le_bytes())?;
     }
-    for &node in &index.graph.node_data {
+    for &node in &index.graph().node_data {
         writer.write_all(&encode_node(node))?;
     }
     write_u32_values(&mut writer, &edge_offsets)?;
@@ -427,8 +427,8 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
 }
 
 fn build_edge_tables(index: &HnswIndex) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>)> {
-    let node_count = index.graph.node_count() as usize;
-    let layer_count = usize::from(index.graph.layer_count());
+    let node_count = index.len();
+    let layer_count = usize::from(index.layer_count());
     let slots = node_count
         .checked_mul(layer_count)
         .ok_or(Error::CapacityExceeded("edge table"))?;
@@ -440,7 +440,7 @@ fn build_edge_tables(index: &HnswIndex) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>)
             offsets.push(
                 u32::try_from(edges.len()).map_err(|_| Error::CapacityExceeded("edge data"))?,
             );
-            let node_edges = index.graph.edges(level as u8, node as u32);
+            let node_edges = index.edges(level as u8, node as u32);
             lengths.push(
                 u32::try_from(node_edges.len())
                     .map_err(|_| Error::CapacityExceeded("node edge list"))?,
@@ -461,7 +461,7 @@ fn update_data_crc(
     for &value in &index.vector_data {
         hasher.update(&value.to_bits().to_le_bytes());
     }
-    for &node in &index.graph.node_data {
+    for &node in &index.graph().node_data {
         hasher.update(&encode_node(node));
     }
     for values in [offsets, lengths, edges] {
@@ -784,16 +784,16 @@ mod tests {
         let loaded = load_file(&path).unwrap();
         assert_eq!(loaded.header().version, VERSION);
         assert_eq!(loaded.header().node_count, 3);
-        for node in 0..index.graph.node_count() {
-            assert_eq!(loaded.node(node), index.graph.node(node));
+        for node in 0..index.len() as NodeIndex {
+            assert_eq!(loaded.node(node), index.node(node));
             assert_eq!(
                 loaded.vector(node).unwrap().iter().collect::<Vec<_>>(),
                 index.vector_store().get(node)
             );
-            for level in 0..index.graph.layer_count() {
+            for level in 0..index.layer_count() {
                 assert_eq!(
                     loaded.edges(level, node).iter().collect::<Vec<_>>(),
-                    index.graph.edges(level, node)
+                    index.edges(level, node)
                 );
             }
         }

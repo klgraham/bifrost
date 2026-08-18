@@ -10,6 +10,9 @@
 - Reject `m == 0` in `Config::validate` and `.hnsw` headers.
 - Keep `HnswIndex` construction parameters private; expose `config()`,
   `set_ef_search`, and `set_level_mult` so prune caps cannot change mid-index.
+- Keep the construction graph private; expose `graph()`, `edges`, `node`,
+  `layer_count`, `has_edge`, and `degree` so callers can inspect adjacency
+  without replacing it or desyncing vectors.
 - Add query-only search on a memory-mapped `.hnsw` snapshot via
   `LoadedHnsw::search`, `LoadedHnsw::search_with_ef`, `LoadedHnsw::open`, and
   `load_file`, so a saved index can be queried without re-inserting every
@@ -54,3 +57,5 @@
 - `Config::max_degree` and `Config::new_node_neighbors` expose those derived
   limits. `Config::m` must be greater than zero.
 - `HnswIndex::config` returns a copy; `set_ef_search` updates query width.
+- `HnswIndex::graph` is a shared reference; `edges`, `node`, `layer_count`,
+  `has_edge`, and `degree` inspect adjacency without allowing replacement.

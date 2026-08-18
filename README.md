@@ -45,7 +45,9 @@ assert_eq!(hits[0].id, 100);
 slice does not match `Config::dim`. Duplicate external IDs are rejected.
 `Config::m` must be greater than zero. Construction parameters are captured at
 `HnswIndex::new`; `config()` returns a copy, and `set_ef_search` is the
-supported way to change the query candidate width. Search uses a layer-0
+supported way to change the query candidate width. `Config::dim` and the
+graph cannot be mutated after construction: inspect neighbors with
+`edges` / `degree` / `layer_count`. Search uses a layer-0
 candidate width of `max(ef_search, k)`, so asking for more hits than
 `Config::ef_search` still returns up to `k` neighbors when the graph contains
 them. A new node keeps at most `M` neighbors at layer 0 and

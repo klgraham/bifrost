@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
-    Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
+    Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, NodeMeta, Result,
     layer::{
         Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
         select_neighbors_heuristic,
@@ -21,14 +21,57 @@ pub struct SearchHit {
 ///
 /// Persist a built index with [`HnswIndex::save`] and later reopen it for
 /// query-only search with [`HnswIndex::load`]. Construction parameters such as
-/// [`Config::m`] are fixed at [`HnswIndex::new`]; use [`HnswIndex::set_ef_search`]
-/// to change the query candidate width. Neighbor lists are chosen with the
-/// paper / hnswlib diversity heuristic. After reverse-link pruning, adjacency
-/// may be directed: a dropped outgoing edge is not removed from the peer.
+/// [`Config::m`] and [`Config::dim`] are fixed at [`HnswIndex::new`]; use
+/// [`HnswIndex::set_ef_search`] to change the query candidate width. The graph
+/// is inspectable through read-only accessors and cannot be replaced. Neighbor
+/// lists are chosen with the paper / hnswlib diversity heuristic. After
+/// reverse-link pruning, adjacency may be directed: a dropped outgoing edge is
+/// not removed from the peer.
+///
+/// # Examples
+///
+/// Query-time candidate width can be changed after construction:
+///
+/// ```
+/// # use hnsw_rs::{Config, HnswIndex};
+/// let mut index = HnswIndex::new(Config {
+///     dim: 2,
+///     rng_seed: Some(1),
+///     ..Config::default()
+/// })?;
+/// index.insert(0, &[1.0, 0.0])?;
+/// index.set_ef_search(8);
+/// assert_eq!(index.config().ef_search, 8);
+/// let _ = index.search(&[1.0, 0.0], 1)?;
+/// # Ok::<(), hnsw_rs::Error>(())
+/// ```
+///
+/// Replacing the graph or mutating `dim` through the old public fields does
+/// not compile:
+///
+/// ```compile_fail
+/// # use hnsw_rs::{Config, Graph, HnswIndex};
+/// let mut index = HnswIndex::new(Config {
+///     dim: 2,
+///     ..Config::default()
+/// })
+/// .unwrap();
+/// index.graph = Graph::new();
+/// ```
+///
+/// ```compile_fail
+/// # use hnsw_rs::{Config, HnswIndex};
+/// let mut index = HnswIndex::new(Config {
+///     dim: 2,
+///     ..Config::default()
+/// })
+/// .unwrap();
+/// index.config.dim = 8;
+/// ```
 #[derive(Debug)]
 pub struct HnswIndex {
     config: Config,
-    pub graph: Graph,
+    graph: Graph,
     pub(crate) vector_data: Vec<f32>,
     pub(crate) vector_offsets: Vec<u32>,
     external_to_internal: HashMap<ExternalId, NodeIndex>,
@@ -240,6 +283,46 @@ impl HnswIndex {
         self.entry_level
     }
 
+    /// Read-only view of the construction graph.
+    ///
+    /// The returned reference cannot replace the graph stored on this index.
+    /// [`Graph`] mutation methods are crate-private, so external callers cannot
+    /// desync adjacency from the vector store.
+    #[must_use]
+    pub fn graph(&self) -> &Graph {
+        &self.graph
+    }
+
+    /// Number of allocated layers in the construction graph.
+    #[must_use]
+    pub fn layer_count(&self) -> u8 {
+        self.graph.layer_count()
+    }
+
+    /// Metadata for a dense internal node, if it exists.
+    #[must_use]
+    pub fn node(&self, node_index: NodeIndex) -> Option<NodeMeta> {
+        self.graph.node(node_index)
+    }
+
+    /// Outgoing neighbors of `node_index` at `level`.
+    #[must_use]
+    pub fn edges(&self, level: u8, node_index: NodeIndex) -> &[NodeIndex] {
+        self.graph.edges(level, node_index)
+    }
+
+    /// Whether a directed edge exists from `source` to `destination` at `level`.
+    #[must_use]
+    pub fn has_edge(&self, level: u8, source: NodeIndex, destination: NodeIndex) -> bool {
+        self.graph.has_edge(level, source, destination)
+    }
+
+    /// Outgoing degree of `node_index` at `level`.
+    #[must_use]
+    pub fn degree(&self, level: u8, node_index: NodeIndex) -> usize {
+        self.graph.edges(level, node_index).len()
+    }
+
     fn check_dimension(&self, vector: &[f32]) -> Result<()> {
         let expected = usize::from(self.config.dim);
         if vector.len() != expected {
@@ -391,7 +474,7 @@ mod tests {
         index.insert(2, &unit_at(-30.0)).unwrap();
         index.insert(3, &unit_at(0.0)).unwrap();
         assert_eq!(
-            index.graph.edges(0, 3),
+            index.edges(0, 3),
             &[0, 2],
             "new node should keep diverse A and C, not nearest A and B"
         );
@@ -409,7 +492,7 @@ mod tests {
         // Mmax0 = 4. After the sixth nearby insert the hub must shrink; the
         // shared Alg. 4 selector should prefer the opposite-side node over
         // keeping only the tight positive-side cluster.
-        let hub = index.graph.edges(0, 0);
+        let hub = index.edges(0, 0);
         assert!(hub.len() <= index.config().max_degree(0));
         assert!(
             hub.contains(&5),
@@ -494,7 +577,10 @@ mod tests {
             left.insert(id as u32, vector).unwrap();
             right.insert(id as u32, vector).unwrap();
         }
-        assert_eq!(left.graph.node_data, right.graph.node_data);
+        assert_eq!(left.len(), right.len());
+        for node in 0..left.len() as NodeIndex {
+            assert_eq!(left.node(node), right.node(node));
+        }
     }
 
     #[test]
@@ -524,7 +610,7 @@ mod tests {
 
         let max0 = config.max_degree(0);
         assert_eq!(max0, 8);
-        let hub_neighbors = index.graph.edges(0, 0);
+        let hub_neighbors = index.edges(0, 0);
         assert!(
             hub_neighbors.len() <= max0,
             "hub degree {} exceeded Mmax0 {max0}",
@@ -535,10 +621,10 @@ mod tests {
             "hub should remain connected after nearby inserts"
         );
 
-        for node in 0..index.graph.node_count() {
-            let meta = index.graph.node(node).unwrap();
+        for node in 0..index.len() as NodeIndex {
+            let meta = index.node(node).unwrap();
             for level in 0..=meta.level {
-                let degree = index.graph.edges(level, node).len();
+                let degree = index.degree(level, node);
                 let cap = config.max_degree(level);
                 assert!(
                     degree <= cap,
@@ -596,10 +682,10 @@ mod tests {
             index.insert(id, &vector).unwrap();
         }
 
-        let hub_neighbors = index.graph.edges(0, 0);
+        let hub_neighbors = index.edges(0, 0);
         assert!(hub_neighbors.len() <= config.max_degree(0));
-        let dropped = (1..index.graph.node_count())
-            .find(|&node| !hub_neighbors.contains(&node) && index.graph.has_edge(0, node, 0));
+        let dropped = (1..index.len() as NodeIndex)
+            .find(|&node| !hub_neighbors.contains(&node) && index.has_edge(0, node, 0));
         assert!(
             dropped.is_some(),
             "expected a dropped peer that still points at the hub; hub neighbors={hub_neighbors:?}"
@@ -635,9 +721,9 @@ mod tests {
         }
 
         let mut connected = 0;
-        for node in 0..index.graph.node_count() {
-            assert!(index.graph.edges(0, node).len() <= config.max_degree(0));
-            let upper = index.graph.edges(1, node).len();
+        for node in 0..index.len() as NodeIndex {
+            assert!(index.degree(0, node) <= config.max_degree(0));
+            let upper = index.degree(1, node);
             assert!(upper <= config.max_degree(1));
             connected += usize::from(upper > 0);
         }
@@ -669,8 +755,8 @@ mod tests {
             let angle = 0.04 * id as f32;
             index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
         }
-        assert!(index.graph.edges(0, 0).len() <= 8);
-        assert!(index.graph.edges(0, 0).len() > 2);
+        assert!(index.degree(0, 0) <= 8);
+        assert!(index.degree(0, 0) > 2);
     }
 
     #[test]
@@ -693,10 +779,10 @@ mod tests {
 
         let max1 = config.max_degree(1);
         assert_eq!(max1, 4);
-        assert!(index.graph.edges(1, 0).len() <= max1);
-        for node in 0..index.graph.node_count() {
-            assert!(index.graph.edges(1, node).len() <= max1);
-            assert!(index.graph.edges(0, node).len() <= config.max_degree(0));
+        assert!(index.degree(1, 0) <= max1);
+        for node in 0..index.len() as NodeIndex {
+            assert!(index.degree(1, node) <= max1);
+            assert!(index.degree(0, node) <= config.max_degree(0));
         }
     }
 
@@ -715,14 +801,14 @@ mod tests {
         {
             index.insert(id as u32, vector).unwrap();
         }
-        for level in 0..index.graph.layer_count() {
-            for node in 0..index.graph.node_count() {
-                let meta = index.graph.node(node).unwrap();
+        for level in 0..index.layer_count() {
+            for node in 0..index.len() as NodeIndex {
+                let meta = index.node(node).unwrap();
                 if meta.level < level {
-                    assert!(index.graph.edges(level, node).is_empty());
+                    assert!(index.edges(level, node).is_empty());
                 }
-                for &neighbor in index.graph.edges(level, node) {
-                    assert!(index.graph.node(neighbor).unwrap().level >= level);
+                for &neighbor in index.edges(level, node) {
+                    assert!(index.node(neighbor).unwrap().level >= level);
                 }
             }
         }
@@ -745,6 +831,32 @@ mod tests {
         }
         let hits = index.search(&[1.0, 0.0], 4).unwrap();
         assert_eq!(hits.len(), 4);
+    }
+
+    #[test]
+    fn set_ef_search_applies_at_query_time() {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            ef_search: 1,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
+            .iter()
+            .enumerate()
+        {
+            index.insert(id as u32, vector).unwrap();
+        }
+        assert_eq!(index.config().ef_search, 1);
+        index.set_ef_search(4);
+        assert_eq!(index.config().ef_search, 4);
+        let hits = index.search(&[1.0, 0.0], 4).unwrap();
+        assert_eq!(hits.len(), 4);
+        assert_eq!(hits[0].id, 0);
+        assert_eq!(index.config().dim, 2);
+        assert_eq!(index.graph().node_count(), index.len() as NodeIndex);
+        assert_eq!(index.degree(0, 0), index.edges(0, 0).len());
     }
 
     #[test]
