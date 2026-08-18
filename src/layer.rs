@@ -35,10 +35,20 @@ impl Ord for Candidate {
 ///
 /// Incrementing the generation is an O(1) clear. Wrapping back to 0 fills
 /// the stamp buffer and resumes at 1 so stale marks cannot collide.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct VisitedList {
     stamps: Vec<u32>,
     generation: u32,
+}
+
+impl std::fmt::Debug for VisitedList {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VisitedList")
+            .field("len", &self.stamps.len())
+            .field("generation", &self.generation)
+            .finish()
+    }
 }
 
 impl VisitedList {
@@ -196,6 +206,7 @@ fn insert_bounded(results: &mut Vec<Candidate>, candidate: Candidate, ef: usize)
     results.truncate(ef);
 }
 
+#[cfg(test)]
 pub(crate) fn search_layer<G, S>(
     graph: &G,
     store: &S,
@@ -224,6 +235,7 @@ where
 /// Greedy search at one layer. `visited` is prepared for this hop so a caller
 /// can reuse the stamp buffer across layers. The frontier is a min-heap on
 /// distance, then node index (the same order as the previous full-sort hop).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn search_layer_excluding<G, S>(
     graph: &G,
     store: &S,
