@@ -733,10 +733,7 @@ fn commit_temporary(temporary: PathBuf, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn replace_file(
-    path: &Path,
-    write: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
-) -> Result<()> {
+fn replace_file(path: &Path, write: impl FnOnce(&mut BufWriter<File>) -> Result<()>) -> Result<()> {
     let temporary = write_temporary(path, write)?;
     commit_temporary(temporary, path)
 }
@@ -1237,7 +1234,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(fs::read(&path).unwrap(), original);
-        assert_eq!(sibling_temps(&path), [temporary.clone()]);
+        assert_eq!(
+            sibling_temps(&path).as_slice(),
+            std::slice::from_ref(&temporary)
+        );
         assert_eq!(fs::read(&temporary).unwrap(), b"not-yet-committed");
 
         commit_temporary(temporary, &path).unwrap();
@@ -1270,7 +1270,10 @@ mod tests {
         assert_eq!(loaded.header().node_count, 1);
         assert_eq!(loaded.node(0).unwrap().external_id, 1);
         drop(loaded);
-        assert_eq!(sibling_temps(&path), [leftover.clone()]);
+        assert_eq!(
+            sibling_temps(&path).as_slice(),
+            std::slice::from_ref(&leftover)
+        );
         assert_eq!(fs::read(&leftover).unwrap(), b"crashed mid-write");
         fs::remove_file(leftover).unwrap();
         fs::remove_file(path).unwrap();
