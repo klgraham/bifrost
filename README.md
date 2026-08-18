@@ -10,7 +10,7 @@ acceleration, and `.hnsw` v3 persistence.
 
 - Dynamic insertion without rebuilding the index
 - Sparse caller-facing `u32` IDs backed by dense internal node indexes
-- Per-layer sorted, duplicate-free adjacency
+- Per-layer sorted, duplicate-free adjacency with HNSW `Mmax` / `Mmax0` degree caps
 - Cosine distance optimized for pre-normalized vectors
 - AVX2 on detected `x86_64` CPUs, NEON on `aarch64`, and a scalar fallback
 - Memory-mapped, bounds-checked file access
@@ -43,10 +43,20 @@ assert_eq!(hits[0].id, 100);
 
 `insert` and `search` return a dimension error instead of panicking when a
 slice does not match `Config::dim`. Duplicate external IDs are rejected.
-Search uses a layer-0 candidate width of `max(ef_search, k)`, so asking for
-more hits than `Config::ef_search` still returns up to `k` neighbors when the
-graph contains them. Random levels come from the maintained `rand` crate. A
-configured seed is repeatable with the pinned dependency version.
+`Config::m` must be greater than zero. Construction parameters are captured at
+`HnswIndex::new`; `config()` returns a copy, and `set_ef_search` is the
+supported way to change the query candidate width. Search uses a layer-0
+candidate width of `max(ef_search, k)`, so asking for more hits than
+`Config::ef_search` still returns up to `k` neighbors when the graph contains
+them. A new node keeps at most `M` neighbors at layer 0 and
+`max(M / 2, 1)` at upper layers, chosen with the Malkov & Yashunin / hnswlib
+diversity heuristic (keep a candidate if it is closer to the new node than to
+any already chosen neighbor). After each reverse link, the neighbor's
+outgoing adjacency is re-selected with the same heuristic and capped at `2M`
+at layer 0 (`Mmax0`) and `M` at upper layers (`Mmax`). Pruning is one-sided:
+a dropped `A → B` edge is not removed from `B`, so the graph can become
+directed after shrink. Random levels come from the maintained `rand` crate.
+A configured seed is repeatable with the pinned dependency version.
 
 ### Normalized-vector contract
 
@@ -262,8 +272,12 @@ Construction uses owned vectors and mutable per-layer adjacency. Persistence
 flattens edges only while saving. This keeps mutation straightforward while
 retaining the original mmap-friendly snapshot representation.
 
-Insertion selects the nearest `M` candidates and does not prune older nodes'
-adjacency lists after adding reverse edges.
+Insertion and reverse-link pruning share the paper / hnswlib diversity
+heuristic (Alg. 4), not simple nearest-`M` (Alg. 3). A candidate is kept only
+when it is closer to the query node than to any already chosen neighbor, up
+to `M` at layer 0 (`max(M / 2, 1)` at upper layers) for a new node and `2M` /
+`M` when shrinking an existing list. The peer keeps its link back to the hub;
+search follows outgoing edges only.
 
 ## License
 

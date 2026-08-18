@@ -11,6 +11,10 @@ pub struct NodeMeta {
 }
 
 /// Mutable per-layer graph used while constructing an index.
+///
+/// Adjacency lists are directed. Insertion adds both directions, then reverse
+/// links are pruned on the neighbor only, so a dropped `A → B` edge can leave
+/// `B → A` in place.
 #[derive(Clone, Debug, Default)]
 pub struct Graph {
     pub(crate) node_data: Vec<NodeMeta>,
@@ -100,6 +104,37 @@ impl Graph {
         self.add_edge(level, right, left)
     }
 
+    pub(crate) fn set_edges(
+        &mut self,
+        level: u8,
+        source: NodeIndex,
+        neighbors: impl IntoIterator<Item = NodeIndex>,
+    ) -> Result<()> {
+        let Some(source_meta) = self.node(source) else {
+            return Err(Error::InvalidNode(source));
+        };
+        if source_meta.level < level {
+            return Err(Error::InvalidLayer(level));
+        }
+        if usize::from(level) >= self.construction_layers.len() {
+            return Err(Error::InvalidLayer(level));
+        }
+
+        let mut edges = neighbors.into_iter().collect::<Vec<_>>();
+        edges.sort_unstable();
+        edges.dedup();
+        for &destination in &edges {
+            let Some(destination_meta) = self.node(destination) else {
+                return Err(Error::InvalidNode(destination));
+            };
+            if destination_meta.level < level {
+                return Err(Error::InvalidLayer(level));
+            }
+        }
+        self.construction_layers[usize::from(level)][source as usize] = edges;
+        Ok(())
+    }
+
     #[must_use]
     pub fn node_count(&self) -> NodeIndex {
         u32::try_from(self.node_data.len()).expect("graph node count was checked before insertion")
@@ -172,5 +207,22 @@ mod tests {
         graph.add_bidirectional_edge(0, 0, 1).unwrap();
         assert!(graph.has_edge(0, 0, 1));
         assert!(graph.has_edge(0, 1, 0));
+    }
+
+    #[test]
+    fn set_edges_replaces_with_sorted_unique_neighbors() {
+        let mut graph = Graph::new();
+        for node in 0..4 {
+            graph.insert_node(node, node + 10, 0, node).unwrap();
+        }
+        graph.add_edge(0, 0, 1).unwrap();
+        graph.add_edge(0, 0, 2).unwrap();
+        graph.add_edge(0, 0, 3).unwrap();
+        graph.set_edges(0, 0, [3, 1, 3]).unwrap();
+        assert_eq!(graph.edges(0, 0), &[1, 3]);
+        assert!(matches!(
+            graph.set_edges(0, 0, [5]),
+            Err(Error::InvalidNode(5))
+        ));
     }
 }

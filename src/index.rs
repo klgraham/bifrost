@@ -6,7 +6,9 @@ use crate::{
     Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
     layer::{
         Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
+        select_neighbors_heuristic,
     },
+    vector::cosine_distance,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -18,10 +20,14 @@ pub struct SearchHit {
 /// Mutable HNSW index supporting incremental insertion and nearest-neighbor search.
 ///
 /// Persist a built index with [`HnswIndex::save`] and later reopen it for
-/// query-only search with [`HnswIndex::load`].
+/// query-only search with [`HnswIndex::load`]. Construction parameters such as
+/// [`Config::m`] are fixed at [`HnswIndex::new`]; use [`HnswIndex::set_ef_search`]
+/// to change the query candidate width. Neighbor lists are chosen with the
+/// paper / hnswlib diversity heuristic. After reverse-link pruning, adjacency
+/// may be directed: a dropped outgoing edge is not removed from the peer.
 #[derive(Debug)]
 pub struct HnswIndex {
-    pub config: Config,
+    config: Config,
     pub graph: Graph,
     pub(crate) vector_data: Vec<f32>,
     pub(crate) vector_offsets: Vec<u32>,
@@ -72,9 +78,40 @@ impl HnswIndex {
         })
     }
 
+    /// Construction and search parameters captured at [`HnswIndex::new`].
+    ///
+    /// The returned value is a copy; mutating it does not change the index.
+    /// [`Config::m`] and other construction caps stay fixed so reverse-link
+    /// pruning cannot be retargeted mid-build.
+    #[must_use]
+    pub fn config(&self) -> Config {
+        self.config
+    }
+
+    /// Sets the layer-0 candidate width used by [`HnswIndex::search`].
+    pub fn set_ef_search(&mut self, ef_search: u16) {
+        self.config.ef_search = ef_search;
+    }
+
+    /// Sets the random-level stop probability used by later [`HnswIndex::insert`]
+    /// calls. Construction caps such as [`Config::m`] are unchanged.
+    pub fn set_level_mult(&mut self, level_mult: f64) -> Result<()> {
+        if !level_mult.is_finite() || !(0.0..=1.0).contains(&level_mult) {
+            return Err(Error::InvalidConfig(
+                "level_mult must be finite and between zero and one",
+            ));
+        }
+        self.config.level_mult = level_mult;
+        Ok(())
+    }
+
     /// Inserts a normalized vector associated with a caller-facing external ID.
+    ///
+    /// New nodes keep up to [`Config::new_node_neighbors`] links chosen with
+    /// the paper / hnswlib diversity heuristic. Each reverse link is then
+    /// pruned with the same selector, so a dropped outgoing edge can remain as
+    /// an incoming edge on the peer.
     pub fn insert(&mut self, id: ExternalId, vector: &[f32]) -> Result<()> {
-        self.config.validate()?;
         self.check_dimension(vector)?;
         if self.external_to_internal.contains_key(&id) {
             return Err(Error::DuplicateExternalId(id));
@@ -230,11 +267,7 @@ impl HnswIndex {
         required_entry_level: u8,
         vector: &[f32],
     ) -> Result<NodeIndex> {
-        let max_neighbors = if level == 0 {
-            self.config.m
-        } else {
-            (self.config.m / 2).max(1)
-        };
+        let max_neighbors = usize::from(self.config.new_node_neighbors(level));
         let candidates = {
             let store = self.vector_store();
             search_layer_excluding(
@@ -248,10 +281,14 @@ impl HnswIndex {
             )?
             .candidates
         };
-
-        for candidate in candidates.iter().take(usize::from(max_neighbors)) {
+        let selected = {
+            let store = self.vector_store();
+            select_neighbors_heuristic(&store, &candidates, max_neighbors)
+        };
+        for candidate in selected {
             self.graph
                 .add_bidirectional_edge(level, node_index, candidate.node_index)?;
+            self.prune_neighbors(level, candidate.node_index)?;
         }
         Ok(select_entry_point_for_level(
             &self.graph,
@@ -259,6 +296,31 @@ impl HnswIndex {
             entry_point,
             required_entry_level,
         ))
+    }
+
+    fn prune_neighbors(&mut self, level: u8, node_index: NodeIndex) -> Result<()> {
+        let max_degree = self.config.max_degree(level);
+        let neighbors = self.graph.edges(level, node_index);
+        // Never shrink to empty: `m == 0` is rejected, but a zero cap would
+        // otherwise wipe an upper-layer reverse list after adding one edge.
+        if max_degree == 0 || neighbors.len() <= max_degree {
+            return Ok(());
+        }
+
+        let neighbors = neighbors.to_vec();
+        let store = self.vector_store();
+        let query = store.get(node_index);
+        let scored = neighbors
+            .into_iter()
+            .map(|neighbor| Candidate {
+                node_index: neighbor,
+                distance: cosine_distance(store.get(neighbor), query),
+            })
+            .collect::<Vec<_>>();
+        let kept = select_neighbors_heuristic(&store, &scored, max_degree)
+            .into_iter()
+            .map(|candidate| candidate.node_index);
+        self.graph.set_edges(level, node_index, kept)
     }
 }
 
@@ -301,6 +363,58 @@ mod tests {
             rng_seed: Some(1234),
             ..Config::default()
         }
+    }
+
+    fn unit_at(degrees: f32) -> [f32; 2] {
+        let radians = degrees.to_radians();
+        [radians.cos(), radians.sin()]
+    }
+
+    fn heuristic_index() -> HnswIndex {
+        HnswIndex::new(Config {
+            dim: 2,
+            m: 2,
+            ef_construction: 16,
+            max_level: 1,
+            level_mult: 1.0,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn insert_selects_neighbors_with_diversity_heuristic() {
+        let mut index = heuristic_index();
+        index.insert(0, &unit_at(5.0)).unwrap();
+        index.insert(1, &unit_at(6.0)).unwrap();
+        index.insert(2, &unit_at(-30.0)).unwrap();
+        index.insert(3, &unit_at(0.0)).unwrap();
+        assert_eq!(
+            index.graph.edges(0, 3),
+            &[0, 2],
+            "new node should keep diverse A and C, not nearest A and B"
+        );
+    }
+
+    #[test]
+    fn prune_selects_neighbors_with_the_same_heuristic() {
+        let mut index = heuristic_index();
+        index.insert(0, &unit_at(0.0)).unwrap();
+        index.insert(1, &unit_at(5.0)).unwrap();
+        index.insert(2, &unit_at(6.0)).unwrap();
+        index.insert(3, &unit_at(7.0)).unwrap();
+        index.insert(4, &unit_at(8.0)).unwrap();
+        index.insert(5, &unit_at(-30.0)).unwrap();
+        // Mmax0 = 4. After the sixth nearby insert the hub must shrink; the
+        // shared Alg. 4 selector should prefer the opposite-side node over
+        // keeping only the tight positive-side cluster.
+        let hub = index.graph.edges(0, 0);
+        assert!(hub.len() <= index.config().max_degree(0));
+        assert!(
+            hub.contains(&5),
+            "prune should keep diverse node 5; hub={hub:?}"
+        );
     }
 
     #[test]
@@ -388,6 +502,202 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(1);
         assert_eq!(random_level(&mut rng, 8, 0.0), 8);
         assert_eq!(random_level(&mut rng, 8, 1.0), 0);
+    }
+
+    #[test]
+    fn popular_node_degree_stays_within_mmax() {
+        let config = Config {
+            dim: 2,
+            m: 4,
+            ef_construction: 32,
+            max_level: 4,
+            level_mult: 1.0,
+            rng_seed: Some(1),
+            ..Config::default()
+        };
+        let mut index = HnswIndex::new(config).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        for id in 1..=48 {
+            let angle = 0.02 * id as f32;
+            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        }
+
+        let max0 = config.max_degree(0);
+        assert_eq!(max0, 8);
+        let hub_neighbors = index.graph.edges(0, 0);
+        assert!(
+            hub_neighbors.len() <= max0,
+            "hub degree {} exceeded Mmax0 {max0}",
+            hub_neighbors.len()
+        );
+        assert!(
+            !hub_neighbors.is_empty(),
+            "hub should remain connected after nearby inserts"
+        );
+
+        for node in 0..index.graph.node_count() {
+            let meta = index.graph.node(node).unwrap();
+            for level in 0..=meta.level {
+                let degree = index.graph.edges(level, node).len();
+                let cap = config.max_degree(level);
+                assert!(
+                    degree <= cap,
+                    "node {node} level {level} degree {degree} exceeded {cap}"
+                );
+            }
+        }
+
+        #[cfg(not(miri))]
+        {
+            let path = std::env::temp_dir().join(format!(
+                "hnsw-rs-hub-degree-{}-{}.hnsw",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            index.save(&path).unwrap();
+            let loaded = LoadedHnsw::open(&path).unwrap();
+            let loaded_hub: Vec<_> = loaded.edges(0, 0).iter().collect();
+            assert_eq!(loaded_hub, hub_neighbors);
+            assert!(loaded_hub.len() <= max0);
+            drop(loaded);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn prune_does_not_remove_reverse_of_dropped_edge() {
+        const DIM: usize = 8;
+        let config = Config {
+            dim: DIM as u16,
+            m: 2,
+            ef_construction: 32,
+            max_level: 1,
+            level_mult: 1.0,
+            rng_seed: Some(1),
+            ..Config::default()
+        };
+        let mut index = HnswIndex::new(config).unwrap();
+        let mut hub = vec![0.0; DIM];
+        hub[0] = 1.0;
+        index.insert(0, &hub).unwrap();
+        // Near-orthogonal perturbations keep every insert closer to the hub
+        // than to the other leaves, so reverse edges concentrate on node 0.
+        for id in 1..=12 {
+            let mut vector = vec![0.0; DIM];
+            vector[0] = 1.0;
+            vector[1 + ((id as usize - 1) % (DIM - 1))] = 0.02 * id as f32;
+            let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+            for value in &mut vector {
+                *value /= norm;
+            }
+            index.insert(id, &vector).unwrap();
+        }
+
+        let hub_neighbors = index.graph.edges(0, 0);
+        assert!(hub_neighbors.len() <= config.max_degree(0));
+        let dropped = (1..index.graph.node_count())
+            .find(|&node| !hub_neighbors.contains(&node) && index.graph.has_edge(0, node, 0));
+        assert!(
+            dropped.is_some(),
+            "expected a dropped peer that still points at the hub; hub neighbors={hub_neighbors:?}"
+        );
+    }
+
+    #[test]
+    fn zero_m_is_rejected_and_m_one_does_not_wipe_neighbors() {
+        assert!(matches!(
+            HnswIndex::new(Config {
+                dim: 2,
+                m: 0,
+                rng_seed: Some(1),
+                ..Config::default()
+            }),
+            Err(Error::InvalidConfig(_))
+        ));
+
+        let config = Config {
+            dim: 2,
+            m: 1,
+            ef_construction: 16,
+            max_level: 1,
+            level_mult: 0.0,
+            rng_seed: Some(1),
+            ..Config::default()
+        };
+        let mut index = HnswIndex::new(config).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        for id in 1..=12 {
+            let angle = 0.1 * id as f32;
+            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        }
+
+        let mut connected = 0;
+        for node in 0..index.graph.node_count() {
+            assert!(index.graph.edges(0, node).len() <= config.max_degree(0));
+            let upper = index.graph.edges(1, node).len();
+            assert!(upper <= config.max_degree(1));
+            connected += usize::from(upper > 0);
+        }
+        assert!(
+            connected >= 2,
+            "m=1 reverse links should be kept, not wiped to empty"
+        );
+    }
+
+    #[test]
+    fn config_accessor_copy_cannot_change_prune_cap() {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            m: 4,
+            level_mult: 1.0,
+            rng_seed: Some(3),
+            ..Config::default()
+        })
+        .unwrap();
+        let mut snapshot = index.config();
+        snapshot.m = 1;
+        index.set_ef_search(8);
+        assert_eq!(snapshot.m, 1);
+        assert_eq!(index.config().m, 4);
+        assert_eq!(index.config().ef_search, 8);
+
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        for id in 1..=20 {
+            let angle = 0.04 * id as f32;
+            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        }
+        assert!(index.graph.edges(0, 0).len() <= 8);
+        assert!(index.graph.edges(0, 0).len() > 2);
+    }
+
+    #[test]
+    fn upper_layer_degree_is_capped_at_m() {
+        let config = Config {
+            dim: 2,
+            m: 4,
+            ef_construction: 32,
+            max_level: 1,
+            level_mult: 0.0,
+            rng_seed: Some(2),
+            ..Config::default()
+        };
+        let mut index = HnswIndex::new(config).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        for id in 1..=40 {
+            let angle = 0.03 * id as f32;
+            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        }
+
+        let max1 = config.max_degree(1);
+        assert_eq!(max1, 4);
+        assert!(index.graph.edges(1, 0).len() <= max1);
+        for node in 0..index.graph.node_count() {
+            assert!(index.graph.edges(1, node).len() <= max1);
+            assert!(index.graph.edges(0, node).len() <= config.max_degree(0));
+        }
     }
 
     #[test]

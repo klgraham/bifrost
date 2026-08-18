@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Select new-node neighbors and prune reverse edges with the paper / hnswlib
+  diversity heuristic (Alg. 4), not simple nearest-`M`.
+- Prune reverse edges after insertion so a node's outgoing degree stays at
+  most `2M` on layer 0 (`Mmax0`) and `M` on upper layers (`Mmax`). Dropped
+  reverse edges stay directed: the peer keeps its link.
+- Reject `m == 0` in `Config::validate` and `.hnsw` headers.
+- Keep `HnswIndex` construction parameters private; expose `config()`,
+  `set_ef_search`, and `set_level_mult` so prune caps cannot change mid-index.
 - Add query-only search on a memory-mapped `.hnsw` snapshot via
   `LoadedHnsw::search`, `LoadedHnsw::search_with_ef`, `LoadedHnsw::open`, and
   `load_file`, so a saved index can be queried without re-inserting every
@@ -40,3 +48,9 @@
 - `LoadedHnsw::search` / `LoadedHnsw::open` query a saved snapshot without
   reconstructing a mutable index.
 - Search candidate width is `max(ef_search, k)`.
+- Neighbor selection uses the diversity heuristic for both insert and prune.
+- Reverse-link pruning caps outgoing degree at `2M` (layer 0) and `M` (upper
+  layers) and leaves the opposite directed edge in place.
+- `Config::max_degree` and `Config::new_node_neighbors` expose those derived
+  limits. `Config::m` must be greater than zero.
+- `HnswIndex::config` returns a copy; `set_ef_search` updates query width.

@@ -252,7 +252,7 @@ fn main() -> Result<()> {
     }
 
     for ef_search in ef_searches {
-        ours.config.ef_search = ef_search as u16;
+        ours.set_ef_search(ef_search as u16);
         usearch.change_expansion_search(ef_search);
 
         let ours_search = measure_search(queries, parameters.repetitions, |query| {
