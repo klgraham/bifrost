@@ -42,6 +42,32 @@ impl Graph {
         Self::default()
     }
 
+    /// Converts a node-list length to [`NodeIndex`] without panicking.
+    ///
+    /// Insertion rejects lengths at [`u32::MAX`], so a well-formed graph always
+    /// fits. If that cap is bypassed, the count saturates instead of panicking
+    /// on the public [`Graph::node_count`] accessor.
+    #[must_use]
+    pub(crate) fn node_index_from_len(len: usize) -> NodeIndex {
+        u32::try_from(len).unwrap_or(u32::MAX)
+    }
+
+    /// `true` when another insert would overflow the on-disk `u32` node index.
+    #[must_use]
+    pub(crate) fn node_len_at_u32_cap(len: usize) -> bool {
+        len >= u32::MAX as usize
+    }
+
+    fn check_insert_node(len: usize, node_index: NodeIndex) -> Result<()> {
+        if Self::node_len_at_u32_cap(len) {
+            return Err(Error::CapacityExceeded("node count"));
+        }
+        if node_index != Self::node_index_from_len(len) {
+            return Err(Error::InvalidNode(node_index));
+        }
+        Ok(())
+    }
+
     pub(crate) fn insert_node(
         &mut self,
         node_index: NodeIndex,
@@ -49,9 +75,7 @@ impl Graph {
         level: u8,
         vector_offset: u32,
     ) -> Result<()> {
-        if node_index != self.node_count() {
-            return Err(Error::InvalidNode(node_index));
-        }
+        Self::check_insert_node(self.node_data.len(), node_index)?;
 
         let old_node_count = self.node_data.len();
         while self.construction_layers.len() <= usize::from(level) {
@@ -202,9 +226,13 @@ impl Graph {
         Ok(())
     }
 
+    /// Number of nodes in the construction graph.
+    ///
+    /// The value fits in [`NodeIndex`] after a successful insert. If the `u32`
+    /// cap is bypassed, this saturates at [`u32::MAX`] instead of panicking.
     #[must_use]
     pub fn node_count(&self) -> NodeIndex {
-        u32::try_from(self.node_data.len()).expect("graph node count was checked before insertion")
+        Self::node_index_from_len(self.node_data.len())
     }
 
     #[must_use]
@@ -318,6 +346,42 @@ mod tests {
             "pre-existing forward edge must survive undo"
         );
         assert!(!graph.has_edge(0, 1, 0));
+    }
+
+    #[test]
+    fn node_index_from_len_saturates_above_u32_max() {
+        assert_eq!(Graph::node_index_from_len(0), 0);
+        assert_eq!(Graph::node_index_from_len(1), 1);
+        assert_eq!(Graph::node_index_from_len(u32::MAX as usize), u32::MAX);
+        if let Some(over) = (u32::MAX as usize).checked_add(1) {
+            assert_eq!(Graph::node_index_from_len(over), u32::MAX);
+        }
+    }
+
+    #[test]
+    fn insert_node_rejects_u32_capacity_without_allocating() {
+        assert!(!Graph::node_len_at_u32_cap(0));
+        assert!(!Graph::node_len_at_u32_cap(u32::MAX as usize - 1));
+        assert!(Graph::node_len_at_u32_cap(u32::MAX as usize));
+        if let Some(over) = (u32::MAX as usize).checked_add(1) {
+            assert!(Graph::node_len_at_u32_cap(over));
+        }
+
+        assert!(matches!(
+            Graph::check_insert_node(u32::MAX as usize, 0),
+            Err(Error::CapacityExceeded("node count"))
+        ));
+        if let Some(over) = (u32::MAX as usize).checked_add(1) {
+            assert!(matches!(
+                Graph::check_insert_node(over, u32::MAX),
+                Err(Error::CapacityExceeded("node count"))
+            ));
+        }
+        assert!(matches!(
+            Graph::check_insert_node(2, 3),
+            Err(Error::InvalidNode(3))
+        ));
+        Graph::check_insert_node(2, 2).unwrap();
     }
 
     #[test]
