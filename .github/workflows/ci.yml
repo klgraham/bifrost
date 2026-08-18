@@ -23,18 +23,21 @@ jobs:
       - run: cargo test --all-features
 
   # Isolated crate: clippy + unit tests only. Default features omit fiqa-prep, so
-  # nothing downloads BEIR FiQA. USearch's Rust crate compiles a C++17 backend
-  # via cxx (no CMake); ubuntu-latest already has g++, and we install it
-  # explicitly so the job does not depend on image extras.
+  # nothing downloads BEIR FiQA. USearch 2.26 compiles a C++17 cxx backend plus
+  # NumKong C SIMD kernels (no CMake). Force gcc/g++: some clang 18 frontends
+  # crash on NumKong's dispatch_other.c.
   competitors:
     runs-on: ubuntu-latest
+    env:
+      CC: gcc
+      CXX: g++
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install C++17 compiler for USearch
-        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Install GCC for USearch / NumKong
+        run: sudo apt-get update && sudo apt-get install -y gcc g++
       - run: cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
       - run: cargo test --manifest-path benchmarks/competitors/Cargo.toml
 

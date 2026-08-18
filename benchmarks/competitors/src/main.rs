@@ -659,6 +659,7 @@ fn build_ours(vectors: &[Vec<f32>], parameters: Parameters) -> HnswIndex {
         // P(level >= L) = M^{-L}.
         level_mult: Config::level_mult_for_m(parameters.m as u8),
         rng_seed: Some(parameters.seed),
+        ..Config::default()
     })
     .expect("valid hnsw-rs benchmark configuration");
     for (id, vector) in vectors.iter().enumerate() {
