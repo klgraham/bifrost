@@ -7,6 +7,7 @@
 
 use std::{
     cell::RefCell,
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{BufWriter, Write},
     ops::Range,
@@ -389,7 +390,8 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     })
 }
 
-/// Memory-maps a `.hnsw` file and validates magic, version, CRC, and layout.
+/// Memory-maps a `.hnsw` file and validates magic, version, CRC, layout, and
+/// writer invariants (unique IDs, packed vector offsets, sorted unique edges).
 ///
 /// Equivalent to [`LoadedHnsw::open`]. The mapping can be searched in place.
 /// Valid v2 files are rewritten to v3 before the mapping is returned.
@@ -611,18 +613,25 @@ fn validate(data: &[u8], header: &Header, sections: &Sections) -> Result<()> {
     let node_count = header.node_count as usize;
     let layer_count = usize::from(header.layer_count);
     let vector_count = sections.vectors.len() / 4;
+    let dim = usize::from(header.dim);
+    let mut seen_ids = HashSet::with_capacity(node_count);
+    let mut vector_offsets = Vec::with_capacity(node_count);
     for node_index in 0..node_count {
         let start = sections.nodes.start + node_index * NODE_META_SIZE;
         let node = read_node(&data[start..start + NODE_META_SIZE]);
         if node.level >= header.layer_count || node.level > header.max_level {
             return Err(Error::InvalidFile("node level is out of range"));
         }
+        if !seen_ids.insert(node.external_id) {
+            return Err(Error::InvalidFile("duplicate external id"));
+        }
         let end = (node.vector_offset as usize)
-            .checked_add(usize::from(header.dim))
+            .checked_add(dim)
             .ok_or(Error::InvalidFile("vector offset overflow"))?;
         if end > vector_count {
             return Err(Error::InvalidFile("vector offset is out of range"));
         }
+        vector_offsets.push(node.vector_offset);
     }
 
     if header.node_count > 0 {
@@ -632,6 +641,19 @@ fn validate(data: &[u8], header: &Header, sections: &Sections) -> Result<()> {
             return Err(Error::InvalidFile(
                 "entry point does not exist at entry_level",
             ));
+        }
+    }
+
+    // The writer stores one packed vector per node: offsets tile [0, n*dim)
+    // with no gaps or overlaps. A permutation of {0, dim, 2*dim, ...} is ok.
+    vector_offsets.sort_unstable();
+    for (index, offset) in vector_offsets.into_iter().enumerate() {
+        let expected = index
+            .checked_mul(dim)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or(Error::InvalidFile("vector offset overflow"))?;
+        if offset != expected {
+            return Err(Error::InvalidFile("overlapping or gapped vector offsets"));
         }
     }
 
@@ -652,11 +674,17 @@ fn validate(data: &[u8], header: &Header, sections: &Sections) -> Result<()> {
             if level > usize::from(node.level) && edge_length != 0 {
                 return Err(Error::InvalidFile("node has edges above its level"));
             }
+            let mut previous = None;
             for edge_index in edge_offset..end {
                 let byte_offset = sections.edges.start + edge_index * 4;
-                if read_u32(&data[byte_offset..byte_offset + 4]) >= header.node_count {
+                let neighbor = read_u32(&data[byte_offset..byte_offset + 4]);
+                if neighbor >= header.node_count {
                     return Err(Error::InvalidFile("edge references an invalid node"));
                 }
+                if previous.is_some_and(|prev| neighbor <= prev) {
+                    return Err(Error::InvalidFile("unsorted or duplicate edge list"));
+                }
+                previous = Some(neighbor);
             }
         }
     }
@@ -1101,6 +1129,28 @@ mod tests {
         fs::remove_file(search_path).unwrap();
     }
 
+    fn node_section_start(header: &Header) -> usize {
+        HEADER_SIZE + header.node_count as usize * usize::from(header.dim) * 4
+    }
+
+    fn first_multi_edge_list(bytes: &[u8]) -> Range<usize> {
+        let header = decode_header(&bytes[..HEADER_SIZE]);
+        let node_count = header.node_count as usize;
+        let slots = node_count * usize::from(header.layer_count);
+        let offsets = node_section_start(&header) + node_count * NODE_META_SIZE;
+        let lengths = offsets + slots * 4;
+        let edges = lengths + slots * 4;
+        for slot in 0..slots {
+            let length = read_u32(&bytes[lengths + slot * 4..lengths + slot * 4 + 4]) as usize;
+            if length >= 2 {
+                let offset = read_u32(&bytes[offsets + slot * 4..offsets + slot * 4 + 4]) as usize;
+                let start = edges + offset * 4;
+                return start..start + length * 4;
+            }
+        }
+        panic!("writer-produced fixture should contain a multi-edge list");
+    }
+
     #[test]
     fn entry_point_below_entry_level_is_rejected() {
         let path = temporary_file("low-entry");
@@ -1108,7 +1158,7 @@ mod tests {
         let mut bytes = fs::read(&path).unwrap();
         let header = decode_header(&bytes[..HEADER_SIZE]);
         assert!(header.entry_level > 0);
-        let nodes = HEADER_SIZE + header.node_count as usize * usize::from(header.dim) * 4;
+        let nodes = node_section_start(&header);
         let entry = nodes + header.entry_point as usize * NODE_META_SIZE;
         bytes[entry + 4] = header.entry_level.saturating_sub(1);
         refresh_crc(&mut bytes);
@@ -1120,6 +1170,90 @@ mod tests {
             ))
         ));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn duplicate_external_ids_are_rejected() {
+        let path = temporary_file("duplicate-id");
+        save_file(&fixture_index(), &path).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        let header = decode_header(&bytes[..HEADER_SIZE]);
+        let nodes = node_section_start(&header);
+        let first_id = read_u32(&bytes[nodes..nodes + 4]);
+        bytes[nodes + NODE_META_SIZE..nodes + NODE_META_SIZE + 4]
+            .copy_from_slice(&first_id.to_le_bytes());
+        refresh_crc(&mut bytes);
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            HnswIndex::load(&path),
+            Err(Error::InvalidFile("duplicate external id"))
+        ));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn overlapping_or_gapped_vector_offsets_are_rejected() {
+        let overlap_path = temporary_file("vector-overlap");
+        save_file(&fixture_index(), &overlap_path).unwrap();
+        let mut bytes = fs::read(&overlap_path).unwrap();
+        let header = decode_header(&bytes[..HEADER_SIZE]);
+        let nodes = node_section_start(&header);
+        bytes[nodes + NODE_META_SIZE + 8..nodes + NODE_META_SIZE + 12]
+            .copy_from_slice(&0_u32.to_le_bytes());
+        refresh_crc(&mut bytes);
+        fs::write(&overlap_path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&overlap_path),
+            Err(Error::InvalidFile("overlapping or gapped vector offsets"))
+        ));
+        fs::remove_file(overlap_path).unwrap();
+
+        let gap_path = temporary_file("vector-gap");
+        save_file(&fixture_index(), &gap_path).unwrap();
+        let mut bytes = fs::read(&gap_path).unwrap();
+        let header = decode_header(&bytes[..HEADER_SIZE]);
+        let nodes = node_section_start(&header);
+        bytes[nodes + NODE_META_SIZE + 8..nodes + NODE_META_SIZE + 12]
+            .copy_from_slice(&1_u32.to_le_bytes());
+        refresh_crc(&mut bytes);
+        fs::write(&gap_path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&gap_path),
+            Err(Error::InvalidFile("overlapping or gapped vector offsets"))
+        ));
+        fs::remove_file(gap_path).unwrap();
+    }
+
+    #[test]
+    fn unsorted_or_duplicate_edge_lists_are_rejected() {
+        let unsorted_path = temporary_file("unsorted-edges");
+        save_file(&fixture_index(), &unsorted_path).unwrap();
+        let mut bytes = fs::read(&unsorted_path).unwrap();
+        let list = first_multi_edge_list(&bytes);
+        let first = bytes[list.start..list.start + 4].to_vec();
+        let second = bytes[list.start + 4..list.start + 8].to_vec();
+        bytes[list.start..list.start + 4].copy_from_slice(&second);
+        bytes[list.start + 4..list.start + 8].copy_from_slice(&first);
+        refresh_crc(&mut bytes);
+        fs::write(&unsorted_path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&unsorted_path),
+            Err(Error::InvalidFile("unsorted or duplicate edge list"))
+        ));
+        fs::remove_file(unsorted_path).unwrap();
+
+        let duplicate_path = temporary_file("duplicate-edges");
+        save_file(&fixture_index(), &duplicate_path).unwrap();
+        let mut bytes = fs::read(&duplicate_path).unwrap();
+        let list = first_multi_edge_list(&bytes);
+        bytes.copy_within(list.start..list.start + 4, list.start + 4);
+        refresh_crc(&mut bytes);
+        fs::write(&duplicate_path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&duplicate_path),
+            Err(Error::InvalidFile("unsorted or duplicate edge list"))
+        ));
+        fs::remove_file(duplicate_path).unwrap();
     }
 
     #[test]
