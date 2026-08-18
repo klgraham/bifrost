@@ -25,7 +25,9 @@ pub struct SearchHit {
 /// [`HnswIndex::set_ef_search`] to change the stored query candidate width, or
 /// [`HnswIndex::search_with_ef`] to override it for one query. Search uses
 /// `max(ef_search, k)` so a request larger than the stored width still returns
-/// up to `k` hits. The graph
+/// up to `k` hits. Insert and search `debug_assert` finite, near-unit vectors;
+/// [`Config::check_vectors`] / [`HnswIndex::set_check_vectors`] make those
+/// failures [`Error::InvalidVector`]. The graph
 /// is inspectable through read-only accessors and cannot be replaced. Neighbor
 /// lists are chosen with the paper / hnswlib diversity heuristic. After
 /// reverse-link pruning, adjacency may be directed: a dropped outgoing edge is
@@ -155,6 +157,14 @@ impl HnswIndex {
         Ok(())
     }
 
+    /// Enables or disables Result-returning vector checks on insert and search.
+    ///
+    /// Debug builds assert finiteness and near-unit norm regardless. See
+    /// [`Config::check_vectors`].
+    pub fn set_check_vectors(&mut self, check_vectors: bool) {
+        self.config.check_vectors = check_vectors;
+    }
+
     /// Sets the random-level stop probability used by later [`HnswIndex::insert`]
     /// calls. Construction caps such as [`Config::m`] are unchanged.
     pub fn set_level_mult(&mut self, level_mult: f64) -> Result<()> {
@@ -169,6 +179,12 @@ impl HnswIndex {
 
     /// Inserts a normalized vector associated with a caller-facing external ID.
     ///
+    /// The slice must match [`Config::dim`]. Debug builds assert that every
+    /// coordinate is finite and that `||v||` is within
+    /// [`crate::vector::UNIT_NORM_TOLERANCE`] of `1`. When
+    /// [`Config::check_vectors`] is set, the same failures return
+    /// [`Error::InvalidVector`] instead of being accepted in release builds.
+    ///
     /// New nodes keep up to [`Config::new_node_neighbors`] links chosen with
     /// the paper / hnswlib diversity heuristic. Each reverse link is then
     /// pruned with the same selector, so a dropped outgoing edge can remain as
@@ -179,7 +195,7 @@ impl HnswIndex {
     /// not visible to [`HnswIndex::search`], and adjacency matches the
     /// pre-insert graph (including lists that prune had already rewritten).
     pub fn insert(&mut self, id: ExternalId, vector: &[f32]) -> Result<()> {
-        self.check_dimension(vector)?;
+        self.check_vector(vector)?;
         if self.external_to_internal.contains_key(&id) {
             return Err(Error::DuplicateExternalId(id));
         }
@@ -276,6 +292,7 @@ impl HnswIndex {
     /// hnswlib, so asking for more hits than [`Config::ef_search`] still
     /// returns up to `k` results when the graph contains them. Call
     /// [`HnswIndex::search_with_ef`] to override the stored width for one query.
+    /// Query vectors are checked the same way as [`HnswIndex::insert`].
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
         self.search_with_ef(query, k, self.config.ef_search)
     }
@@ -285,7 +302,7 @@ impl HnswIndex {
     /// The search width is `max(ef, k)`. The stored [`Config::ef_search`] is
     /// unchanged; use [`HnswIndex::set_ef_search`] to persist a new default.
     pub fn search_with_ef(&self, query: &[f32], k: usize, ef: u16) -> Result<Vec<SearchHit>> {
-        self.check_dimension(query)?;
+        self.check_vector(query)?;
         let store = self.vector_store();
         let candidates = search_knn(
             &self.graph,
@@ -396,6 +413,11 @@ impl HnswIndex {
             });
         }
         Ok(())
+    }
+
+    fn check_vector(&self, vector: &[f32]) -> Result<()> {
+        self.check_dimension(vector)?;
+        crate::vector::validate_input_vector(vector, self.config.check_vectors)
     }
 
     pub(crate) fn vector_store(&self) -> VectorStore<'_> {
@@ -571,6 +593,13 @@ mod tests {
         [radians.cos(), radians.sin()]
     }
 
+    fn unit_diagonal() -> [f32; 2] {
+        [
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+        ]
+    }
+
     fn heuristic_index() -> HnswIndex {
         HnswIndex::new(Config {
             dim: 2,
@@ -624,7 +653,7 @@ mod tests {
         index.insert(0, &[1.0, 0.0, 0.0, 0.0]).unwrap();
         index.insert(1, &[0.0, 1.0, 0.0, 0.0]).unwrap();
         index.insert(2, &[0.0, 0.0, 1.0, 0.0]).unwrap();
-        let results = index.search(&[0.9, 0.1, 0.0, 0.0], 2).unwrap();
+        let results = index.search(&[0.9998, 0.02, 0.0, 0.0], 2).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, 0);
         assert!(results[0].distance < results[1].distance);
@@ -632,15 +661,19 @@ mod tests {
 
     #[test]
     fn build_batch_and_search() {
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
         let vectors: [&[f32]; 4] = [
             &[1.0, 0.0, 0.0],
             &[0.0, 1.0, 0.0],
             &[0.0, 0.0, 1.0],
-            &[1.0, 1.0, 0.0],
+            &[diagonal, diagonal, 0.0],
         ];
         let mut index = HnswIndex::new(config(3)).unwrap();
         index.build(&vectors).unwrap();
-        assert_eq!(index.search(&[0.9, 0.9, 0.0], 2).unwrap().len(), 2);
+        assert_eq!(
+            index.search(&[diagonal, diagonal, 0.0], 2).unwrap().len(),
+            2
+        );
     }
 
     #[test]
@@ -688,7 +721,7 @@ mod tests {
     fn seeded_indexes_have_identical_node_levels() {
         let mut left = HnswIndex::new(config(2)).unwrap();
         let mut right = HnswIndex::new(config(2)).unwrap();
-        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [-1.0, 0.0]]
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], unit_diagonal(), [-1.0, 0.0]]
             .iter()
             .enumerate()
         {
@@ -913,7 +946,7 @@ mod tests {
             ..Config::default()
         })
         .unwrap();
-        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [-1.0, 0.0]]
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], unit_diagonal(), [-1.0, 0.0]]
             .iter()
             .enumerate()
         {
@@ -1022,6 +1055,85 @@ mod tests {
             index.search(&[1.0], 1),
             Err(Error::DimensionMismatch { .. })
         ));
+        index.set_check_vectors(true);
+        assert!(matches!(
+            index.insert(0, &[f32::NAN]),
+            Err(Error::DimensionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn check_vectors_rejects_non_finite_and_unnormalized() {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            check_vectors: true,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        assert!(matches!(
+            index.insert(0, &[f32::NAN, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            index.insert(0, &[f32::INFINITY, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            index.insert(0, &[2.0, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(index.is_empty());
+
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        assert_eq!(index.search(&[1.0, 0.0], 1).unwrap()[0].id, 0);
+        index.insert(1, &[1.009, 0.0]).unwrap();
+        assert!(matches!(
+            index.search(&[f32::NAN, 0.0], 1),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            index.search(&[0.0, 0.0], 1),
+            Err(Error::InvalidVector(_))
+        ));
+        assert_eq!(index.search(&[1.0, 0.0], 2).unwrap().len(), 2);
+
+        index.set_check_vectors(false);
+        assert!(!index.config().check_vectors);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "unit-normalized")]
+    fn debug_builds_assert_unnormalized_insert() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        let _ = index.insert(0, &[2.0, 0.0]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "unit-normalized")]
+    fn debug_builds_assert_non_finite_search() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        let _ = index.search(&[f32::NAN, 0.0], 1);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn release_builds_accept_unnormalized_unless_check_vectors() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.insert(0, &[2.0, 0.0]).unwrap();
+        assert_eq!(index.search(&[2.0, 0.0], 1).unwrap()[0].id, 0);
+        index.set_check_vectors(true);
+        assert!(matches!(
+            index.insert(1, &[2.0, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            index.search(&[f32::INFINITY, 0.0], 1),
+            Err(Error::InvalidVector(_))
+        ));
     }
 
     #[derive(Debug, PartialEq)]
@@ -1097,14 +1209,14 @@ mod tests {
 
         index.fail_insert_after_append = true;
         assert!(matches!(
-            index.insert(7, &[0.7, 0.7]),
+            index.insert(7, &unit_diagonal()),
             Err(Error::InvalidNode(_))
         ));
         assert_eq!(snapshot(&index), before);
         assert_id_absent(&index, 7);
 
-        index.insert(7, &[0.7, 0.7]).unwrap();
-        assert_eq!(index.search(&[0.7, 0.7], 1).unwrap()[0].id, 7);
+        index.insert(7, &unit_diagonal()).unwrap();
+        assert_eq!(index.search(&unit_diagonal(), 1).unwrap()[0].id, 7);
         assert_eq!(index.len(), before.len + 1);
     }
 
@@ -1174,7 +1286,7 @@ mod tests {
 
         index.graph.fail_next_add_edge_from(0);
         assert!(matches!(
-            index.insert(2, &[0.7, 0.7]),
+            index.insert(2, &unit_diagonal()),
             Err(Error::InvalidNode(0))
         ));
         assert_eq!(snapshot(&index), before);
@@ -1182,8 +1294,8 @@ mod tests {
         assert!(!index.has_edge(0, 0, 2));
         assert!(!index.has_edge(0, 2, 0));
 
-        index.insert(2, &[0.7, 0.7]).unwrap();
-        assert_eq!(index.search(&[0.7, 0.7], 1).unwrap()[0].id, 2);
+        index.insert(2, &unit_diagonal()).unwrap();
+        assert_eq!(index.search(&unit_diagonal(), 1).unwrap()[0].id, 2);
     }
 
     fn deterministic_unit_vector(seed: usize, dim: usize) -> Vec<f32> {

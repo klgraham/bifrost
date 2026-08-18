@@ -7,7 +7,9 @@
 //! `sync_all` + `rename`); do not mutate a mapped file while [`LoadedHnsw`]
 //! lives. Query width is `max(ef_search, k)` on both
 //! [`HnswIndex::search`] and [`LoadedHnsw::search`]; `search_with_ef` overrides
-//! the stored candidate width for a single query.
+//! the stored candidate width for a single query. Insert and search
+//! `debug_assert` finite, near-unit vectors; [`Config::check_vectors`]
+//! returns [`Error::InvalidVector`] for the same failures.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 

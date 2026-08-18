@@ -6,6 +6,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     InvalidConfig(&'static str),
     DimensionMismatch { expected: usize, actual: usize },
+    InvalidVector(&'static str),
     DuplicateExternalId(u32),
     CapacityExceeded(&'static str),
     InvalidNode(u32),
@@ -24,6 +25,7 @@ impl fmt::Display for Error {
             Self::DimensionMismatch { expected, actual } => {
                 write!(f, "dimension mismatch: expected {expected}, got {actual}")
             }
+            Self::InvalidVector(message) => write!(f, "invalid vector: {message}"),
             Self::DuplicateExternalId(id) => write!(f, "duplicate external ID {id}"),
             Self::CapacityExceeded(what) => write!(f, "{what} exceeds the on-disk u32 capacity"),
             Self::InvalidNode(node) => write!(f, "invalid node index {node}"),

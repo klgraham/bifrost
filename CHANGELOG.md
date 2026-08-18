@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `debug_assert` that insert and search vectors are finite and near-unit
+  (`||v||` within `0.01` of `1`). `Config::check_vectors` (default `false`)
+  makes `HnswIndex` insert/search and `LoadedHnsw` search return
+  `Error::InvalidVector` for the same failures. The flag is not stored in
+  snapshots; `LoadedHnsw::set_check_vectors` enables query checks after load.
 - Default `level_mult` to `1.0 - 1.0 / m` (`Config::level_mult_for_m`) so
   `Config::default()` matches the HNSW paper, hnswlib, and the competitor
   benchmark crate (`P(level >= L) = m^{-L}`). Existing snapshots that stored
@@ -66,6 +71,9 @@
 
 - Dimension mismatches and invalid configuration return typed Rust errors
   rather than relying on debug assertions.
+- Insert and search `debug_assert` finite, near-unit vectors. With
+  `Config::check_vectors` (or `set_check_vectors`), those failures are
+  `Error::InvalidVector`. The flag is not persisted in `.hnsw` snapshots.
 - Search results are owned `Vec<SearchHit>` values.
 - Mmap accessors decode checked little-endian views rather than exposing typed
   slices cast directly from file bytes. The mapping is read-only; do not
@@ -86,7 +94,8 @@
   limits. `Config::m`, `Config::ef_construction`, and `Config::ef_search` must
   be greater than zero.
 - `HnswIndex::config` returns a copy; `set_ef_search` updates query width and
-  rejects `0`.
+  rejects `0`. `set_check_vectors` toggles `Error::InvalidVector` on insert
+  and search.
 - `HnswIndex::graph` is a shared reference; `edges`, `node`, `layer_count`,
   `has_edge`, and `degree` inspect adjacency without allowing replacement.
 - `HnswIndex::insert` is transactional: failure after the node is appended

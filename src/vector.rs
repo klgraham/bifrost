@@ -1,5 +1,43 @@
 //! Distance kernels for normalized and arbitrary vectors.
 
+use crate::{Error, Result};
+
+/// Absolute deviation from unit L2 norm still treated as pre-normalized.
+///
+/// Matches the FiQA fixture preparer: a vector is accepted when
+/// `| ||v|| - 1 | <= UNIT_NORM_TOLERANCE`.
+pub const UNIT_NORM_TOLERANCE: f32 = 0.01;
+
+/// Returns `Ok(())` when every coordinate is finite and `||v||` is within
+/// [`UNIT_NORM_TOLERANCE`] of `1`.
+///
+/// [`crate::HnswIndex::insert`] and search call this when
+/// [`crate::Config::check_vectors`] is set. Debug builds also
+/// `debug_assert` the same contract when the flag is off.
+pub fn check_normalized_vector(vector: &[f32]) -> Result<()> {
+    if !vector.iter().all(|value| value.is_finite()) {
+        return Err(Error::InvalidVector("coordinates must be finite"));
+    }
+    let norm = dot(vector, vector).sqrt();
+    if !norm.is_finite() || (norm - 1.0).abs() > UNIT_NORM_TOLERANCE {
+        return Err(Error::InvalidVector("norm must be within 0.01 of one"));
+    }
+    Ok(())
+}
+
+/// Debug-asserts the pre-normalized contract; returns [`Error::InvalidVector`]
+/// when `enforce` is set.
+pub(crate) fn validate_input_vector(vector: &[f32], enforce: bool) -> Result<()> {
+    if enforce {
+        return check_normalized_vector(vector);
+    }
+    debug_assert!(
+        check_normalized_vector(vector).is_ok(),
+        "HNSW insert/search vectors must be finite and unit-normalized (||v|| within {UNIT_NORM_TOLERANCE} of 1); set Config::check_vectors to return Error"
+    );
+    Ok(())
+}
+
 /// Returns the dot product of equal-length vectors.
 ///
 /// AVX2 and NEON kernels use eight partial sums. Every other target uses the
@@ -110,6 +148,10 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Cosine distance for vectors already normalized to unit length.
+///
+/// This is `1 - dot(a, b)` and does not inspect finiteness or norm.
+/// Insert and search `debug_assert` that contract, and return
+/// [`Error::InvalidVector`] when [`crate::Config::check_vectors`] is set.
 #[must_use]
 pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     1.0 - dot(a, b)
@@ -131,6 +173,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     #[test]
     fn dot_product_is_correct() {
@@ -149,6 +192,36 @@ mod tests {
     fn general_cosine_handles_zero_vectors() {
         assert!((cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 0.001);
         assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn check_normalized_vector_rejects_nan_inf_and_off_unit() {
+        assert!(check_normalized_vector(&[1.0, 0.0]).is_ok());
+        assert!(check_normalized_vector(&[1.009, 0.0]).is_ok());
+        assert!(matches!(
+            check_normalized_vector(&[f32::NAN, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            check_normalized_vector(&[f32::INFINITY, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            check_normalized_vector(&[f32::NEG_INFINITY, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            check_normalized_vector(&[2.0, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            check_normalized_vector(&[0.0, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
+        assert!(matches!(
+            check_normalized_vector(&[1.011, 0.0]),
+            Err(Error::InvalidVector(_))
+        ));
     }
 
     #[test]
