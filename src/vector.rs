@@ -207,9 +207,7 @@ mod tests {
 
     #[test]
     fn dot_product_is_correct() {
-        assert!(
-            (dot(&[1.0, 2.0, 3.0, 4.0], &[2.0, 3.0, 4.0, 5.0]).unwrap() - 40.0).abs() < 0.001
-        );
+        assert!((dot(&[1.0, 2.0, 3.0, 4.0], &[2.0, 3.0, 4.0, 5.0]).unwrap() - 40.0).abs() < 0.001);
     }
 
     #[test]
