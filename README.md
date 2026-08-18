@@ -82,12 +82,16 @@ assert_eq!(
     loaded.vector(0).unwrap().iter().collect::<Vec<_>>(),
     [1.0, 0.0]
 );
+let hits = loaded.search(&[1.0, 0.0], 1)?;
+assert_eq!(hits[0].id, 7);
 # std::fs::remove_file(path)?;
 # Ok(())
 # }
 ```
 
-Loaded files remain memory-mapped. `node`, `vector`, and `edges` expose checked
+`HnswIndex::load` is the same mapping constructor as `load_file`. Loaded files
+remain memory-mapped and query-only: `search` walks the on-disk graph and
+vectors without re-inserting them. `node`, `vector`, and `edges` expose checked
 views tied to the mapping's lifetime; values are decoded from explicit
 little-endian bytes rather than obtained through unaligned pointer casts.
 

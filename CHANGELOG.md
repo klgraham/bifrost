@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add query-only search on a memory-mapped `.hnsw` snapshot via
+  `LoadedHnsw::search` and `HnswIndex::load`, so a saved index can be queried
+  without re-inserting every vector.
+
 ## 0.2.0 - 2026-07-18
 
 - Add an isolated competitor benchmark crate for comparing hnsw-rs with
@@ -27,3 +33,5 @@
 - Search results are owned `Vec<SearchHit>` values.
 - Mmap accessors decode checked little-endian views rather than exposing typed
   slices cast directly from file bytes.
+- `LoadedHnsw::search` and `HnswIndex::load` query a saved snapshot without
+  reconstructing a mutable index.
