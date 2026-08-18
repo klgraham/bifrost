@@ -38,6 +38,9 @@
 - Add `HnswIndex::search_with_ef` so live search can override candidate width
   the same way as `LoadedHnsw::search_with_ef`.
 - Reject snapshots whose entry node does not exist at `entry_level`.
+- Reject snapshots with duplicate `external_id`s, overlapping or gapped
+  `vector_offset`s, or unsorted/duplicate edge lists. The writer emits
+  unique IDs, packed vector rows, and sorted unique adjacency.
 
 ## 0.2.0 - 2026-07-18
 
