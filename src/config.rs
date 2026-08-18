@@ -40,6 +40,16 @@ pub struct Config {
     /// Optional seed for repeatable construction with the pinned `rand` version.
     /// Operating-system entropy is used when absent.
     pub rng_seed: Option<u64>,
+    /// When `true`, insert and search return [`crate::Error::InvalidVector`]
+    /// for non-finite coordinates or an L2 norm more than
+    /// [`crate::vector::UNIT_NORM_TOLERANCE`] from `1`.
+    ///
+    /// Default is `false`: release builds keep the previous unchecked
+    /// contract. Debug builds always `debug_assert` the same conditions so
+    /// NaN/Inf and clearly unnormalized inputs fail in development. The flag
+    /// is not stored in `.hnsw` snapshots; call
+    /// [`crate::LoadedHnsw::set_check_vectors`] after mapping.
+    pub check_vectors: bool,
 }
 
 impl Default for Config {
@@ -53,6 +63,7 @@ impl Default for Config {
             max_level: 16,
             level_mult: Self::level_mult_for_m(m),
             rng_seed: None,
+            check_vectors: false,
         }
     }
 }
@@ -136,6 +147,7 @@ mod tests {
                 max_level: 16,
                 level_mult: 0.9375,
                 rng_seed: None,
+                check_vectors: false,
             }
         );
         assert_eq!(Config::default().level_mult, Config::level_mult_for_m(16));

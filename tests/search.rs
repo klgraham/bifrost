@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf, time::SystemTime};
 
-use hnsw_rs::{Config, HnswIndex, LoadedHnsw};
+use hnsw_rs::{Config, Error, HnswIndex, LoadedHnsw};
 
 fn temporary_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -43,4 +43,40 @@ fn search_returns_k_when_larger_than_ef_search() {
     assert_eq!(loaded.search_with_ef(&query, 4, 2).unwrap(), live);
     drop(loaded);
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn loaded_search_rejects_non_finite_and_unnormalized_when_checked() {
+    let index = four_node_index(4);
+    let path = temporary_file("check-vectors");
+    index.save(&path).unwrap();
+    let mut loaded = LoadedHnsw::open(&path).unwrap();
+    assert!(!loaded.header().config().check_vectors);
+    loaded.set_check_vectors(true);
+    assert!(matches!(
+        loaded.search(&[f32::NAN, 0.0], 1),
+        Err(Error::InvalidVector(_))
+    ));
+    assert!(matches!(
+        loaded.search(&[f32::INFINITY, 0.0], 1),
+        Err(Error::InvalidVector(_))
+    ));
+    assert!(matches!(
+        loaded.search(&[2.0, 0.0], 1),
+        Err(Error::InvalidVector(_))
+    ));
+    assert_eq!(loaded.search(&[1.0, 0.0], 1).unwrap()[0].id, 0);
+    drop(loaded);
+    fs::remove_file(path).unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "unit-normalized")]
+fn loaded_search_debug_asserts_unnormalized_query() {
+    let index = four_node_index(4);
+    let path = temporary_file("check-vectors-debug");
+    index.save(&path).unwrap();
+    let loaded = LoadedHnsw::open(&path).unwrap();
+    let _ = loaded.search(&[2.0, 0.0], 1);
 }

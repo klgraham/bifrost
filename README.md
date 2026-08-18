@@ -35,7 +35,7 @@ let mut index = HnswIndex::new(Config {
 index.insert(100, &[1.0, 0.0, 0.0, 0.0])?;
 index.insert(5_000, &[0.0, 1.0, 0.0, 0.0])?;
 
-let hits = index.search(&[0.98, 0.02, 0.0, 0.0], 10)?;
+let hits = index.search(&[0.9998, 0.02, 0.0, 0.0], 10)?;
 assert_eq!(hits[0].id, 100);
 # Ok(())
 # }
@@ -43,6 +43,9 @@ assert_eq!(hits[0].id, 100);
 
 `insert` and `search` return a dimension error instead of panicking when a
 slice does not match `Config::dim`. Duplicate external IDs are rejected.
+Non-finite or badly normalized vectors `debug_assert` in debug builds; set
+`Config::check_vectors` (or `set_check_vectors` on a live index or mapped
+snapshot) to return `Error::InvalidVector` in release as well.
 `insert` is all-or-nothing: a failure after the node is appended does not
 consume the ID, leave the node visible to search, or keep a one-sided edge.
 `Config::m`, `Config::ef_construction`, and `Config::ef_search` must be greater
@@ -70,6 +73,14 @@ unit-normalized. This is the fast form of cosine distance and ranges from 0 for
 identical unit vectors to 2 for opposite vectors. Use
 `hnsw_rs::vector::cosine_similarity` when working with arbitrary vectors, but
 normalize them before inserting them into an index.
+
+Debug builds `debug_assert` that every insert and search vector is finite and
+that `||v||` is within `0.01` of `1` (the same tolerance as the FiQA preparer,
+exposed as `hnsw_rs::vector::UNIT_NORM_TOLERANCE`). `Config::check_vectors`
+defaults to `false` so release builds keep the previous unchecked contract;
+when set, insert and search return `Error::InvalidVector` instead. The flag is
+not persisted in `.hnsw` snapshots — call `LoadedHnsw::set_check_vectors`
+after mapping if query checks should return errors.
 
 ### Level multiplier
 

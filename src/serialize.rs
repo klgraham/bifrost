@@ -61,6 +61,7 @@ impl Header {
             max_level: self.max_level,
             level_mult: self.level_mult,
             rng_seed: None,
+            check_vectors: false,
         }
     }
 
@@ -97,6 +98,7 @@ pub struct LoadedHnsw {
     mmap: Mmap,
     header: Header,
     sections: Sections,
+    check_vectors: bool,
 }
 
 impl std::fmt::Debug for LoadedHnsw {
@@ -105,6 +107,7 @@ impl std::fmt::Debug for LoadedHnsw {
             .debug_struct("LoadedHnsw")
             .field("header", &self.header)
             .field("file_size", &self.mmap.len())
+            .field("check_vectors", &self.check_vectors)
             .finish()
     }
 }
@@ -150,11 +153,21 @@ impl LoadedHnsw {
         load_file(path)
     }
 
+    /// Enables or disables Result-returning checks on search queries.
+    ///
+    /// Debug builds assert finiteness and near-unit norm regardless. The flag
+    /// is not read from the snapshot header; see [`Config::check_vectors`].
+    pub fn set_check_vectors(&mut self, check_vectors: bool) {
+        self.check_vectors = check_vectors;
+    }
+
     /// Searches the mapped snapshot for at most `k` nearest neighbors.
     ///
     /// Uses the stored `ef_search`, expanded to `max(ef_search, k)` so a
     /// request larger than the saved candidate width still returns up to `k`
     /// hits. Call [`LoadedHnsw::search_with_ef`] to override the stored width.
+    /// Query vectors are `debug_assert`ed finite and near-unit; set
+    /// [`LoadedHnsw::set_check_vectors`] to return [`Error::InvalidVector`].
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
         self.search_with_ef(query, k, self.header.ef_search)
     }
@@ -165,7 +178,7 @@ impl LoadedHnsw {
     /// The graph and vectors stay mapped; nothing is copied into an owned
     /// [`HnswIndex`].
     pub fn search_with_ef(&self, query: &[f32], k: usize, ef: u16) -> Result<Vec<SearchHit>> {
-        self.check_dimension(query)?;
+        self.check_vector(query)?;
         let store = MappedVectors {
             loaded: self,
             scratch: RefCell::new(vec![0.0; usize::from(self.header.dim)]),
@@ -202,6 +215,11 @@ impl LoadedHnsw {
             });
         }
         Ok(())
+    }
+
+    fn check_vector(&self, vector: &[f32]) -> Result<()> {
+        self.check_dimension(vector)?;
+        crate::vector::validate_input_vector(vector, self.check_vectors)
     }
 
     #[must_use]
@@ -435,6 +453,7 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
                     mmap,
                     header,
                     sections,
+                    check_vectors: false,
                 });
             }
             MIGRATABLE_VERSION => {
@@ -900,7 +919,7 @@ mod tests {
     fn save_load_search_matches_live_index() {
         let path = temporary_file("search-round-trip");
         let index = fixture_index();
-        let query = [0.9_f32, 0.1];
+        let query = [0.9998_f32, 0.02];
         let live = index.search(&query, 3).unwrap();
         index.save(&path).unwrap();
 

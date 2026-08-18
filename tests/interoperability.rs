@@ -67,7 +67,7 @@ fn loaded_fixture_search_matches_live_index() {
     fs::write(&path, v3_fixture()).unwrap();
     let loaded = load_file(&path).unwrap();
     let live = fixture_index();
-    let query = [0.9_f32, 0.1];
+    let query = [0.9998_f32, 0.02];
     assert_eq!(
         loaded.search(&query, 3).unwrap(),
         live.search(&query, 3).unwrap()
