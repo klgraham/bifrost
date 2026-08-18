@@ -677,6 +677,27 @@ mod tests {
     }
 
     #[test]
+    fn build_on_non_empty_index_rejects_colliding_ids() {
+        let mut index = HnswIndex::new(config(3)).unwrap();
+        index.insert(0, &[1.0, 0.0, 0.0]).unwrap();
+        assert!(matches!(
+            index.build(&[&[0.0, 1.0, 0.0], &[0.0, 0.0, 1.0]]),
+            Err(Error::DuplicateExternalId(0))
+        ));
+        assert_eq!(index.len(), 1);
+        assert_eq!(index.search(&[1.0, 0.0, 0.0], 1).unwrap()[0].id, 0);
+
+        let mut built = HnswIndex::new(config(3)).unwrap();
+        built.build(&[&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0]]).unwrap();
+        assert!(matches!(
+            built.build(&[&[0.0, 0.0, 1.0]]),
+            Err(Error::DuplicateExternalId(0))
+        ));
+        assert_eq!(built.len(), 2);
+        assert_eq!(built.search(&[0.0, 1.0, 0.0], 1).unwrap()[0].id, 1);
+    }
+
+    #[test]
     fn empty_and_single_vector_indexes() {
         let mut index = HnswIndex::new(config(4)).unwrap();
         assert!(index.search(&[1.0, 0.0, 0.0, 0.0], 5).unwrap().is_empty());
@@ -1312,31 +1333,21 @@ mod tests {
         vector
     }
 
-    #[test]
-    fn deterministic_recall_at_ten_exceeds_baseline() {
-        const DIM: usize = 16;
-        const COUNT: usize = 256;
-        const QUERY_COUNT: usize = 20;
-        const K: usize = 10;
-
-        let vectors = (0..COUNT)
-            .map(|seed| deterministic_unit_vector(seed, DIM))
+    fn recall_at_k(config: Config, count: usize, query_count: usize, k: usize) -> f32 {
+        let dim = usize::from(config.dim);
+        let vectors = (0..count)
+            .map(|seed| deterministic_unit_vector(seed, dim))
             .collect::<Vec<_>>();
-        let mut index = HnswIndex::new(Config {
-            dim: DIM as u16,
-            rng_seed: Some(7),
-            ..Config::default()
-        })
-        .unwrap();
+        let mut index = HnswIndex::new(config).unwrap();
         for (id, vector) in vectors.iter().enumerate() {
             index.insert(id as u32, vector).unwrap();
         }
 
         let mut recalled = 0;
-        for query_index in 0..QUERY_COUNT {
-            let query = deterministic_unit_vector(10_000 + query_index, DIM);
+        for query_index in 0..query_count {
+            let query = deterministic_unit_vector(10_000 + query_index, dim);
             let approximate = index
-                .search(&query, K)
+                .search(&query, k)
                 .unwrap()
                 .into_iter()
                 .map(|hit| hit.id)
@@ -1353,12 +1364,48 @@ mod tests {
             });
             recalled += exact
                 .iter()
-                .take(K)
+                .take(k)
                 .filter(|(id, _)| approximate.contains(id))
                 .count();
         }
+        recalled as f32 / (query_count * k) as f32
+    }
 
-        let recall = recalled as f32 / (QUERY_COUNT * K) as f32;
-        assert!(recall >= 0.8, "recall@10 regressed to {recall:.3}");
+    #[test]
+    fn deterministic_recall_at_ten_exceeds_baseline() {
+        let recall = recall_at_k(
+            Config {
+                dim: 16,
+                rng_seed: Some(7),
+                ..Config::default()
+            },
+            256,
+            20,
+            10,
+        );
+        assert!(recall >= 0.95, "recall@10 regressed to {recall:.3}");
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn larger_seeded_graph_keeps_high_recall_at_ten() {
+        // Default 256×16-d / M=16 / ef=100 still scores 1.0. This larger
+        // graph with M=8 and ef_search=32 scores ~0.96, so the 0.90 floor
+        // actually moves when neighbor selection or connectivity regresses.
+        let recall = recall_at_k(
+            Config {
+                dim: 32,
+                m: 8,
+                ef_construction: 64,
+                ef_search: 32,
+                level_mult: Config::level_mult_for_m(8),
+                rng_seed: Some(7),
+                ..Config::default()
+            },
+            1024,
+            32,
+            10,
+        );
+        assert!(recall >= 0.90, "recall@10 regressed to {recall:.3}");
     }
 }

@@ -43,20 +43,47 @@ fn fixture_index() -> HnswIndex {
     index
 }
 
+fn fixture_vector(node: u32) -> [f32; 2] {
+    match node {
+        0 => [1.0, 0.0],
+        1 => [0.0, 1.0],
+        2 => [-1.0, 0.0],
+        _ => panic!("v3 fixture has three nodes"),
+    }
+}
+
 #[test]
 fn loads_v3_fixture() {
     let path = temporary_file("load-v3");
     fs::write(&path, v3_fixture()).unwrap();
     let loaded = load_file(&path).unwrap();
-    assert_eq!(loaded.header().version, VERSION);
-    assert_eq!(loaded.header().node_count, 3);
-    assert_eq!(loaded.node(0).unwrap().external_id, 100);
-    assert_eq!(loaded.node(1).unwrap().external_id, 200);
-    assert_eq!(loaded.node(2).unwrap().external_id, 300);
-    assert_eq!(
-        loaded.vector(2).unwrap().iter().collect::<Vec<_>>(),
-        [-1.0, 0.0]
-    );
+    let live = fixture_index();
+    let header = loaded.header();
+    assert_eq!(header.version, VERSION);
+    assert_eq!(header.node_count, live.len() as u32);
+    assert_eq!(header.dim, live.config().dim);
+    assert_eq!(header.m, live.config().m);
+    assert_eq!(header.ef_construction, live.config().ef_construction);
+    assert_eq!(header.ef_search, live.config().ef_search);
+    assert_eq!(header.max_level, live.config().max_level);
+    assert_eq!(header.level_mult, live.config().level_mult);
+    assert_eq!(header.layer_count, live.layer_count());
+    assert_eq!(header.entry_point, live.entry_point().unwrap());
+    assert_eq!(header.entry_level, live.entry_level());
+    assert_eq!(loaded.node(3), None);
+    for node in 0..live.len() as u32 {
+        assert_eq!(loaded.node(node), live.node(node));
+        assert_eq!(
+            loaded.vector(node).unwrap().iter().collect::<Vec<_>>(),
+            fixture_vector(node)
+        );
+        for level in 0..live.layer_count() {
+            assert_eq!(
+                loaded.edges(level, node).iter().collect::<Vec<_>>(),
+                live.edges(level, node)
+            );
+        }
+    }
     drop(loaded);
     fs::remove_file(path).unwrap();
 }
@@ -72,7 +99,10 @@ fn loaded_fixture_search_matches_live_index() {
         loaded.search(&query, 3).unwrap(),
         live.search(&query, 3).unwrap()
     );
-    assert_eq!(loaded.search(&[0.0, 1.0], 1).unwrap()[0].id, 200);
+    for (vector, id) in [([1.0_f32, 0.0], 100), ([0.0, 1.0], 200), ([-1.0, 0.0], 300)] {
+        assert_eq!(loaded.search(&vector, 1).unwrap()[0].id, id);
+        assert_eq!(live.search(&vector, 1).unwrap()[0].id, id);
+    }
     drop(loaded);
     fs::remove_file(path).unwrap();
 }
