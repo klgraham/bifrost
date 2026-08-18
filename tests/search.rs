@@ -12,8 +12,7 @@ fn temporary_file(label: &str) -> PathBuf {
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+            .map_or(0, |duration| duration.as_nanos())
     ))
 }
 
