@@ -187,7 +187,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo bench --bench distance
 cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --manifest-path benchmarks/competitors/Cargo.toml
 ```
+
+CI runs the library fmt / clippy / test steps on Ubuntu, macOS, and Windows.
+A separate Ubuntu job clippy-checks the competitor crate (including
+`fiqa-prep`) and runs its unit tests with default features, so USearch's C++17
+backend is compiled and the local fixture test covers `level_mult` /
+`ef_search` wiring without downloading BEIR FiQA.
 
 The persistence suite loads a deterministic v3 golden file and requires the
 writer to reproduce all 220 bytes exactly. Its SHA-256 is documented in

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI clippy-checks and unit-tests the competitor crate (no FiQA download) and
+  runs library tests on Windows as well as Ubuntu and macOS.
 - Drop the `documentation` crate metadata URL. It pointed at docs.rs/hnsw-rs,
   which is not this unpublished crate (`publish = false`); crates.io `hnsw_rs`
   is a different project.

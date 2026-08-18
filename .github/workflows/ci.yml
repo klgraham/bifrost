@@ -11,7 +11,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +21,22 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
+
+  # Isolated crate: clippy + unit tests only. Default features omit fiqa-prep, so
+  # nothing downloads BEIR FiQA. USearch's Rust crate compiles a C++17 backend
+  # via cxx (no CMake); ubuntu-latest already has g++, and we install it
+  # explicitly so the job does not depend on image extras.
+  competitors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install C++17 compiler for USearch
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - run: cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
+      - run: cargo test --manifest-path benchmarks/competitors/Cargo.toml
 
   miri:
     runs-on: ubuntu-latest
