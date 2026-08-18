@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
-    Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
+    Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, NodeMeta, Result,
     layer::{
         Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
         select_neighbors_heuristic,
