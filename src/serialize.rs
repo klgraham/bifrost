@@ -332,7 +332,8 @@ impl SearchVectors for MappedVectors<'_> {
 
 /// Writes a validated `.hnsw` snapshot for later query-only mapping.
 pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
-    index.config.validate()?;
+    let config = index.config();
+    config.validate()?;
     let (edge_offsets, edge_lengths, edge_data) = build_edge_tables(index)?;
     let mut hasher = Hasher::new();
     update_data_crc(&mut hasher, index, &edge_offsets, &edge_lengths, &edge_data);
@@ -340,13 +341,13 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     let mut header = Header {
         magic: MAGIC,
         version: VERSION,
-        dim: index.config.dim,
+        dim: config.dim,
         node_count: index.graph.node_count(),
-        m: index.config.m,
-        ef_construction: index.config.ef_construction,
-        ef_search: index.config.ef_search,
-        max_level: index.config.max_level,
-        level_mult: index.config.level_mult,
+        m: config.m,
+        ef_construction: config.ef_construction,
+        ef_search: config.ef_search,
+        max_level: config.max_level,
+        level_mult: config.level_mult,
         entry_point: index.entry_point.unwrap_or(0),
         entry_level: index.entry_level,
         layer_count: index.graph.layer_count(),
@@ -561,6 +562,9 @@ fn validate_header(header: &Header) -> Result<()> {
     if header.dim == 0 || header.max_level == 0 {
         return Err(Error::InvalidFile("invalid dimension or maximum level"));
     }
+    if header.m == 0 {
+        return Err(Error::InvalidFile("invalid neighbor count"));
+    }
     if !header.level_mult.is_finite() || !(0.0..=1.0).contains(&header.level_mult) {
         return Err(Error::InvalidFile("invalid level multiplier"));
     }
@@ -720,7 +724,7 @@ mod tests {
         })
         .unwrap();
         index.insert(100, &[1.0, 0.0]).unwrap();
-        index.config.level_mult = 1.0;
+        index.set_level_mult(1.0).unwrap();
         index.insert(200, &[0.0, 1.0]).unwrap();
         index.insert(300, &[-1.0, 0.0]).unwrap();
         index
@@ -1003,6 +1007,21 @@ mod tests {
             Err(Error::InvalidFile(_))
         ));
         fs::remove_file(truncated_path).unwrap();
+    }
+
+    #[test]
+    fn zero_m_header_is_rejected() {
+        let path = temporary_file("zero-m");
+        save_file(&fixture_index(), &path).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[12] = 0;
+        refresh_crc(&mut bytes);
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&path),
+            Err(Error::InvalidFile("invalid neighbor count"))
+        ));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

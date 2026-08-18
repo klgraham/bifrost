@@ -7,10 +7,12 @@ pub struct Config {
     pub dim: u16,
     /// Maximum neighbors selected for a newly inserted node in layer zero.
     ///
-    /// Upper layers select [`Config::new_node_neighbors`] neighbors
-    /// (`max(m / 2, 1)`). After each reverse link, an existing node's
-    /// adjacency is pruned to [`Config::max_degree`]: `2 * m` at layer 0
-    /// (`Mmax0`) and `m` at upper layers (`Mmax`).
+    /// Must be greater than zero. Upper layers select
+    /// [`Config::new_node_neighbors`] neighbors (`max(m / 2, 1)`). After each
+    /// reverse link, an existing node's adjacency is pruned to
+    /// [`Config::max_degree`]: `2 * m` at layer 0 (`Mmax0`) and `m` at upper
+    /// layers (`Mmax`). Pruning is one-sided: a dropped outgoing edge is not
+    /// removed from the peer, so adjacency may become directed.
     pub m: u8,
     /// Candidate search width during insertion.
     pub ef_construction: u16,
@@ -46,6 +48,9 @@ impl Config {
     pub(crate) fn validate(self) -> Result<Self> {
         if self.dim == 0 {
             return Err(Error::InvalidConfig("dim must be greater than zero"));
+        }
+        if self.m == 0 {
+            return Err(Error::InvalidConfig("m must be greater than zero"));
         }
         if self.max_level == 0 || self.max_level == u8::MAX {
             return Err(Error::InvalidConfig("max_level must be between 1 and 254"));
@@ -124,6 +129,14 @@ mod tests {
         assert!(matches!(
             Config {
                 max_level: u8::MAX,
+                ..Config::default()
+            }
+            .validate(),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            Config {
+                m: 0,
                 ..Config::default()
             }
             .validate(),

@@ -37,7 +37,7 @@ fn fixture_index() -> HnswIndex {
     })
     .unwrap();
     index.insert(100, &[1.0, 0.0]).unwrap();
-    index.config.level_mult = 1.0;
+    index.set_level_mult(1.0).unwrap();
     index.insert(200, &[0.0, 1.0]).unwrap();
     index.insert(300, &[-1.0, 0.0]).unwrap();
     index

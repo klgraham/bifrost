@@ -11,6 +11,10 @@ pub struct NodeMeta {
 }
 
 /// Mutable per-layer graph used while constructing an index.
+///
+/// Adjacency lists are directed. Insertion adds both directions, then reverse
+/// links are pruned on the neighbor only, so a dropped `A → B` edge can leave
+/// `B → A` in place.
 #[derive(Clone, Debug, Default)]
 pub struct Graph {
     pub(crate) node_data: Vec<NodeMeta>,

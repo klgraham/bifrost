@@ -43,14 +43,18 @@ assert_eq!(hits[0].id, 100);
 
 `insert` and `search` return a dimension error instead of panicking when a
 slice does not match `Config::dim`. Duplicate external IDs are rejected.
-Search uses a layer-0 candidate width of `max(ef_search, k)`, so asking for
-more hits than `Config::ef_search` still returns up to `k` neighbors when the
-graph contains them. A new node keeps the nearest `M` neighbors at layer 0 and
+`Config::m` must be greater than zero. Construction parameters are captured at
+`HnswIndex::new`; `config()` returns a copy, and `set_ef_search` is the
+supported way to change the query candidate width. Search uses a layer-0
+candidate width of `max(ef_search, k)`, so asking for more hits than
+`Config::ef_search` still returns up to `k` neighbors when the graph contains
+them. A new node keeps the nearest `M` neighbors at layer 0 and
 `max(M / 2, 1)` at upper layers. After each reverse link, the neighbor's
-adjacency is pruned to `2M` at layer 0 (`Mmax0`) and `M` at upper layers
-(`Mmax`), matching Malkov & Yashunin. Random levels come from the maintained
-`rand` crate. A configured seed is repeatable with the pinned dependency
-version.
+outgoing adjacency is pruned to `2M` at layer 0 (`Mmax0`) and `M` at upper
+layers (`Mmax`), matching Malkov & Yashunin. Pruning is one-sided: a dropped
+`A → B` edge is not removed from `B`, so the graph can become directed after
+shrink. Random levels come from the maintained `rand` crate. A configured
+seed is repeatable with the pinned dependency version.
 
 ### Normalized-vector contract
 
@@ -267,9 +271,10 @@ flattens edges only while saving. This keeps mutation straightforward while
 retaining the original mmap-friendly snapshot representation.
 
 Insertion selects the nearest `M` candidates at layer 0 (`max(M / 2, 1)` at
-upper layers). After each reverse edge, the neighbor's adjacency is re-selected
-with the same closest-neighbor rule and capped at `2M` on layer 0 and `M` on
-upper layers so a hub's degree cannot grow with every insert.
+upper layers). After each reverse edge, the neighbor's outgoing adjacency is
+re-selected with the same closest-neighbor rule and capped at `2M` on layer 0
+and `M` on upper layers so a hub's degree cannot grow with every insert. The
+peer keeps its link back to the hub; search follows outgoing edges only.
 
 ## License
 
