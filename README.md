@@ -48,13 +48,15 @@ slice does not match `Config::dim`. Duplicate external IDs are rejected.
 supported way to change the query candidate width. Search uses a layer-0
 candidate width of `max(ef_search, k)`, so asking for more hits than
 `Config::ef_search` still returns up to `k` neighbors when the graph contains
-them. A new node keeps the nearest `M` neighbors at layer 0 and
-`max(M / 2, 1)` at upper layers. After each reverse link, the neighbor's
-outgoing adjacency is pruned to `2M` at layer 0 (`Mmax0`) and `M` at upper
-layers (`Mmax`), matching Malkov & Yashunin. Pruning is one-sided: a dropped
-`A → B` edge is not removed from `B`, so the graph can become directed after
-shrink. Random levels come from the maintained `rand` crate. A configured
-seed is repeatable with the pinned dependency version.
+them. A new node keeps at most `M` neighbors at layer 0 and
+`max(M / 2, 1)` at upper layers, chosen with the Malkov & Yashunin / hnswlib
+diversity heuristic (keep a candidate if it is closer to the new node than to
+any already chosen neighbor). After each reverse link, the neighbor's
+outgoing adjacency is re-selected with the same heuristic and capped at `2M`
+at layer 0 (`Mmax0`) and `M` at upper layers (`Mmax`). Pruning is one-sided:
+a dropped `A → B` edge is not removed from `B`, so the graph can become
+directed after shrink. Random levels come from the maintained `rand` crate.
+A configured seed is repeatable with the pinned dependency version.
 
 ### Normalized-vector contract
 
@@ -270,11 +272,12 @@ Construction uses owned vectors and mutable per-layer adjacency. Persistence
 flattens edges only while saving. This keeps mutation straightforward while
 retaining the original mmap-friendly snapshot representation.
 
-Insertion selects the nearest `M` candidates at layer 0 (`max(M / 2, 1)` at
-upper layers). After each reverse edge, the neighbor's outgoing adjacency is
-re-selected with the same closest-neighbor rule and capped at `2M` on layer 0
-and `M` on upper layers so a hub's degree cannot grow with every insert. The
-peer keeps its link back to the hub; search follows outgoing edges only.
+Insertion and reverse-link pruning share the paper / hnswlib diversity
+heuristic (Alg. 4), not simple nearest-`M` (Alg. 3). A candidate is kept only
+when it is closer to the query node than to any already chosen neighbor, up
+to `M` at layer 0 (`max(M / 2, 1)` at upper layers) for a new node and `2M` /
+`M` when shrinking an existing list. The peer keeps its link back to the hub;
+search follows outgoing edges only.
 
 ## License
 

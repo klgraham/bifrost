@@ -61,10 +61,46 @@ impl SearchVectors for VectorStore<'_> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn select_closest(mut candidates: Vec<Candidate>, max: usize) -> Vec<Candidate> {
     candidates.sort_by(compare_candidates);
     candidates.truncate(max);
     candidates
+}
+
+/// Malkov & Yashunin Alg. 4 / hnswlib `getNeighborsByHeuristic2`.
+///
+/// Candidates are considered nearest-first. A candidate is kept only when it
+/// is at least as close to the query as to every already chosen neighbor, so
+/// the selected set is more spatially diverse than raw nearest-`max`.
+pub(crate) fn select_neighbors_heuristic(
+    store: &VectorStore<'_>,
+    candidates: &[Candidate],
+    max: usize,
+) -> Vec<Candidate> {
+    let mut ordered = candidates.to_vec();
+    ordered.sort_by(compare_candidates);
+    if max == 0 || ordered.is_empty() {
+        return Vec::new();
+    }
+    if ordered.len() < max {
+        return ordered;
+    }
+
+    let mut selected: Vec<Candidate> = Vec::with_capacity(max);
+    for candidate in ordered {
+        if selected.len() >= max {
+            break;
+        }
+        let vector = store.get(candidate.node_index);
+        let diverse = selected.iter().all(|chosen| {
+            cosine_distance(store.get(chosen.node_index), vector) >= candidate.distance
+        });
+        if diverse {
+            selected.push(candidate);
+        }
+    }
+    selected
 }
 
 fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
@@ -257,6 +293,11 @@ mod tests {
         graph
     }
 
+    fn angle_vector(degrees: f32) -> [f32; 2] {
+        let radians = degrees.to_radians();
+        [radians.cos(), radians.sin()]
+    }
+
     #[test]
     fn select_closest_keeps_nearest_neighbors() {
         let candidates = vec![
@@ -283,6 +324,42 @@ mod tests {
                 .map(|candidate| candidate.node_index)
                 .collect::<Vec<_>>(),
             vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn heuristic_keeps_a_more_diverse_set_than_nearest_m() {
+        let query = angle_vector(0.0);
+        let vectors = [angle_vector(5.0), angle_vector(6.0), angle_vector(-30.0)];
+        let data = vectors.iter().flatten().copied().collect::<Vec<_>>();
+        let offsets = [0_u32, 2, 4];
+        let store = VectorStore {
+            data: &data,
+            offsets: &offsets,
+            dim: 2,
+        };
+        let candidates = (0..3)
+            .map(|node| Candidate {
+                node_index: node,
+                distance: cosine_distance(store.get(node), &query),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            select_closest(candidates.clone(), 2)
+                .iter()
+                .map(|candidate| candidate.node_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1],
+            "Alg. 3 keeps the two nearest (A, B)"
+        );
+        assert_eq!(
+            select_neighbors_heuristic(&store, &candidates, 2)
+                .iter()
+                .map(|candidate| candidate.node_index)
+                .collect::<Vec<_>>(),
+            vec![0, 2],
+            "Alg. 4 keeps the diverse pair (A, C)"
         );
     }
 

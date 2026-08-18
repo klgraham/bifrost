@@ -6,7 +6,7 @@ use crate::{
     Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
     layer::{
         Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
-        select_closest,
+        select_neighbors_heuristic,
     },
     vector::cosine_distance,
 };
@@ -22,7 +22,8 @@ pub struct SearchHit {
 /// Persist a built index with [`HnswIndex::save`] and later reopen it for
 /// query-only search with [`HnswIndex::load`]. Construction parameters such as
 /// [`Config::m`] are fixed at [`HnswIndex::new`]; use [`HnswIndex::set_ef_search`]
-/// to change the query candidate width. After reverse-link pruning, adjacency
+/// to change the query candidate width. Neighbor lists are chosen with the
+/// paper / hnswlib diversity heuristic. After reverse-link pruning, adjacency
 /// may be directed: a dropped outgoing edge is not removed from the peer.
 #[derive(Debug)]
 pub struct HnswIndex {
@@ -106,9 +107,10 @@ impl HnswIndex {
 
     /// Inserts a normalized vector associated with a caller-facing external ID.
     ///
-    /// New nodes take the nearest [`Config::new_node_neighbors`] links. Each
-    /// reverse link is then pruned on the neighbor only, so a dropped outgoing
-    /// edge can remain as an incoming edge on the peer.
+    /// New nodes keep up to [`Config::new_node_neighbors`] links chosen with
+    /// the paper / hnswlib diversity heuristic. Each reverse link is then
+    /// pruned with the same selector, so a dropped outgoing edge can remain as
+    /// an incoming edge on the peer.
     pub fn insert(&mut self, id: ExternalId, vector: &[f32]) -> Result<()> {
         self.check_dimension(vector)?;
         if self.external_to_internal.contains_key(&id) {
@@ -279,7 +281,11 @@ impl HnswIndex {
             )?
             .candidates
         };
-        for candidate in candidates.iter().take(max_neighbors) {
+        let selected = {
+            let store = self.vector_store();
+            select_neighbors_heuristic(&store, &candidates, max_neighbors)
+        };
+        for candidate in selected {
             self.graph
                 .add_bidirectional_edge(level, node_index, candidate.node_index)?;
             self.prune_neighbors(level, candidate.node_index)?;
@@ -310,8 +316,8 @@ impl HnswIndex {
                 node_index: neighbor,
                 distance: cosine_distance(store.get(neighbor), query),
             })
-            .collect();
-        let kept = select_closest(scored, max_degree)
+            .collect::<Vec<_>>();
+        let kept = select_neighbors_heuristic(&store, &scored, max_degree)
             .into_iter()
             .map(|candidate| candidate.node_index);
         self.graph.set_edges(level, node_index, kept)
@@ -357,6 +363,58 @@ mod tests {
             rng_seed: Some(1234),
             ..Config::default()
         }
+    }
+
+    fn unit_at(degrees: f32) -> [f32; 2] {
+        let radians = degrees.to_radians();
+        [radians.cos(), radians.sin()]
+    }
+
+    fn heuristic_index() -> HnswIndex {
+        HnswIndex::new(Config {
+            dim: 2,
+            m: 2,
+            ef_construction: 16,
+            max_level: 1,
+            level_mult: 1.0,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn insert_selects_neighbors_with_diversity_heuristic() {
+        let mut index = heuristic_index();
+        index.insert(0, &unit_at(5.0)).unwrap();
+        index.insert(1, &unit_at(6.0)).unwrap();
+        index.insert(2, &unit_at(-30.0)).unwrap();
+        index.insert(3, &unit_at(0.0)).unwrap();
+        assert_eq!(
+            index.graph.edges(0, 3),
+            &[0, 2],
+            "new node should keep diverse A and C, not nearest A and B"
+        );
+    }
+
+    #[test]
+    fn prune_selects_neighbors_with_the_same_heuristic() {
+        let mut index = heuristic_index();
+        index.insert(0, &unit_at(0.0)).unwrap();
+        index.insert(1, &unit_at(5.0)).unwrap();
+        index.insert(2, &unit_at(6.0)).unwrap();
+        index.insert(3, &unit_at(7.0)).unwrap();
+        index.insert(4, &unit_at(8.0)).unwrap();
+        index.insert(5, &unit_at(-30.0)).unwrap();
+        // Mmax0 = 4. After the sixth nearby insert the hub must shrink; the
+        // shared Alg. 4 selector should prefer the opposite-side node over
+        // keeping only the tight positive-side cluster.
+        let hub = index.graph.edges(0, 0);
+        assert!(hub.len() <= index.config().max_degree(0));
+        assert!(
+            hub.contains(&5),
+            "prune should keep diverse node 5; hub={hub:?}"
+        );
     }
 
     #[test]
@@ -473,26 +531,9 @@ mod tests {
             hub_neighbors.len()
         );
         assert!(
-            hub_neighbors.len() >= usize::from(config.new_node_neighbors(0)),
+            !hub_neighbors.is_empty(),
             "hub should remain connected after nearby inserts"
         );
-
-        let store = index.vector_store();
-        let hub = store.get(0);
-        let farthest_kept = hub_neighbors
-            .iter()
-            .map(|&neighbor| cosine_distance(store.get(neighbor), hub))
-            .max_by(|left, right| left.total_cmp(right))
-            .unwrap();
-        for node in 1..index.graph.node_count() {
-            if hub_neighbors.contains(&node) || !index.graph.has_edge(0, node, 0) {
-                continue;
-            }
-            assert!(
-                cosine_distance(store.get(node), hub) >= farthest_kept,
-                "dropped peer {node} is closer than a kept hub neighbor"
-            );
-        }
 
         for node in 0..index.graph.node_count() {
             let meta = index.graph.node(node).unwrap();
