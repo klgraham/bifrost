@@ -594,7 +594,10 @@ mod tests {
     }
 
     fn unit_diagonal() -> [f32; 2] {
-        [f32::consts::FRAC_1_SQRT_2, f32::consts::FRAC_1_SQRT_2]
+        [
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+        ]
     }
 
     fn heuristic_index() -> HnswIndex {
@@ -658,7 +661,7 @@ mod tests {
 
     #[test]
     fn build_batch_and_search() {
-        let diagonal = f32::consts::FRAC_1_SQRT_2;
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
         let vectors: [&[f32]; 4] = [
             &[1.0, 0.0, 0.0],
             &[0.0, 1.0, 0.0],
@@ -1083,6 +1086,7 @@ mod tests {
         assert!(index.is_empty());
 
         index.insert(0, &[1.0, 0.0]).unwrap();
+        assert_eq!(index.search(&[1.0, 0.0], 1).unwrap()[0].id, 0);
         index.insert(1, &[1.009, 0.0]).unwrap();
         assert!(matches!(
             index.search(&[f32::NAN, 0.0], 1),
@@ -1092,7 +1096,7 @@ mod tests {
             index.search(&[0.0, 0.0], 1),
             Err(Error::InvalidVector(_))
         ));
-        assert_eq!(index.search(&[1.0, 0.0], 1).unwrap()[0].id, 0);
+        assert_eq!(index.search(&[1.0, 0.0], 2).unwrap().len(), 2);
 
         index.set_check_vectors(false);
         assert!(!index.config().check_vectors);
