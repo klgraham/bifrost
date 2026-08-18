@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prune reverse edges after insertion so a node's degree stays at most `2M`
+  on layer 0 (`Mmax0`) and `M` on upper layers (`Mmax`).
 - Add query-only search on a memory-mapped `.hnsw` snapshot via
   `LoadedHnsw::search`, `LoadedHnsw::search_with_ef`, `LoadedHnsw::open`, and
   `load_file`, so a saved index can be queried without re-inserting every
@@ -40,3 +42,6 @@
 - `LoadedHnsw::search` / `LoadedHnsw::open` query a saved snapshot without
   reconstructing a mutable index.
 - Search candidate width is `max(ef_search, k)`.
+- Reverse-link pruning caps outgoing degree at `2M` (layer 0) and `M` (upper
+  layers). `Config::max_degree` and `Config::new_node_neighbors` expose those
+  derived limits.

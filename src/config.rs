@@ -5,7 +5,12 @@ use crate::{Error, Result};
 pub struct Config {
     /// Vector dimensionality.
     pub dim: u16,
-    /// Maximum neighbors selected for a new node in layer zero.
+    /// Maximum neighbors selected for a newly inserted node in layer zero.
+    ///
+    /// Upper layers select [`Config::new_node_neighbors`] neighbors
+    /// (`max(m / 2, 1)`). After each reverse link, an existing node's
+    /// adjacency is pruned to [`Config::max_degree`]: `2 * m` at layer 0
+    /// (`Mmax0`) and `m` at upper layers (`Mmax`).
     pub m: u8,
     /// Candidate search width during insertion.
     pub ef_construction: u16,
@@ -51,6 +56,30 @@ impl Config {
             ));
         }
         Ok(self)
+    }
+
+    /// Neighbors selected for a newly inserted node at `level`.
+    ///
+    /// Layer 0 uses [`Config::m`]; upper layers use `max(m / 2, 1)`.
+    #[must_use]
+    pub fn new_node_neighbors(&self, level: u8) -> u8 {
+        if level == 0 {
+            self.m
+        } else {
+            (self.m / 2).max(1)
+        }
+    }
+
+    /// Maximum outgoing degree after reverse-link pruning (HNSW `Mmax` / `Mmax0`).
+    ///
+    /// Layer 0 allows `2 * m` neighbors; upper layers allow `m`.
+    #[must_use]
+    pub fn max_degree(&self, level: u8) -> usize {
+        if level == 0 {
+            2 * usize::from(self.m)
+        } else {
+            usize::from(self.m)
+        }
     }
 }
 
@@ -100,5 +129,25 @@ mod tests {
             .validate(),
             Err(Error::InvalidConfig(_))
         ));
+    }
+
+    #[test]
+    fn neighbor_caps_follow_hnsw_mmax() {
+        let config = Config {
+            m: 16,
+            ..Config::default()
+        };
+        assert_eq!(config.new_node_neighbors(0), 16);
+        assert_eq!(config.new_node_neighbors(1), 8);
+        assert_eq!(config.max_degree(0), 32);
+        assert_eq!(config.max_degree(1), 16);
+
+        let tiny = Config {
+            m: 1,
+            ..Config::default()
+        };
+        assert_eq!(tiny.new_node_neighbors(3), 1);
+        assert_eq!(tiny.max_degree(0), 2);
+        assert_eq!(tiny.max_degree(2), 1);
     }
 }

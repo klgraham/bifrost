@@ -61,6 +61,12 @@ impl SearchVectors for VectorStore<'_> {
     }
 }
 
+pub(crate) fn select_closest(mut candidates: Vec<Candidate>, max: usize) -> Vec<Candidate> {
+    candidates.sort_by(compare_candidates);
+    candidates.truncate(max);
+    candidates
+}
+
 fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
     left.distance
         .total_cmp(&right.distance)
@@ -249,6 +255,35 @@ mod tests {
                 .unwrap();
         }
         graph
+    }
+
+    #[test]
+    fn select_closest_keeps_nearest_neighbors() {
+        let candidates = vec![
+            Candidate {
+                node_index: 3,
+                distance: 0.4,
+            },
+            Candidate {
+                node_index: 1,
+                distance: 0.1,
+            },
+            Candidate {
+                node_index: 2,
+                distance: 0.1,
+            },
+            Candidate {
+                node_index: 4,
+                distance: 0.9,
+            },
+        ];
+        let kept = select_closest(candidates, 2);
+        assert_eq!(
+            kept.iter()
+                .map(|candidate| candidate.node_index)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     #[test]

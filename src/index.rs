@@ -6,7 +6,9 @@ use crate::{
     Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
     layer::{
         Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
+        select_closest,
     },
+    vector::cosine_distance,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -230,11 +232,7 @@ impl HnswIndex {
         required_entry_level: u8,
         vector: &[f32],
     ) -> Result<NodeIndex> {
-        let max_neighbors = if level == 0 {
-            self.config.m
-        } else {
-            (self.config.m / 2).max(1)
-        };
+        let max_neighbors = usize::from(self.config.new_node_neighbors(level));
         let candidates = {
             let store = self.vector_store();
             search_layer_excluding(
@@ -248,10 +246,10 @@ impl HnswIndex {
             )?
             .candidates
         };
-
-        for candidate in candidates.iter().take(usize::from(max_neighbors)) {
+        for candidate in candidates.iter().take(max_neighbors) {
             self.graph
                 .add_bidirectional_edge(level, node_index, candidate.node_index)?;
+            self.prune_neighbors(level, candidate.node_index)?;
         }
         Ok(select_entry_point_for_level(
             &self.graph,
@@ -259,6 +257,29 @@ impl HnswIndex {
             entry_point,
             required_entry_level,
         ))
+    }
+
+    fn prune_neighbors(&mut self, level: u8, node_index: NodeIndex) -> Result<()> {
+        let max_degree = self.config.max_degree(level);
+        let neighbors = self.graph.edges(level, node_index);
+        if neighbors.len() <= max_degree {
+            return Ok(());
+        }
+
+        let neighbors = neighbors.to_vec();
+        let store = self.vector_store();
+        let query = store.get(node_index);
+        let scored = neighbors
+            .into_iter()
+            .map(|neighbor| Candidate {
+                node_index: neighbor,
+                distance: cosine_distance(store.get(neighbor), query),
+            })
+            .collect();
+        let kept = select_closest(scored, max_degree)
+            .into_iter()
+            .map(|candidate| candidate.node_index);
+        self.graph.set_edges(level, node_index, kept)
     }
 }
 
@@ -388,6 +409,76 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(1);
         assert_eq!(random_level(&mut rng, 8, 0.0), 8);
         assert_eq!(random_level(&mut rng, 8, 1.0), 0);
+    }
+
+    #[test]
+    fn popular_node_degree_stays_within_mmax() {
+        let config = Config {
+            dim: 2,
+            m: 4,
+            ef_construction: 32,
+            max_level: 4,
+            level_mult: 1.0,
+            rng_seed: Some(1),
+            ..Config::default()
+        };
+        let mut index = HnswIndex::new(config).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        for id in 1..=48 {
+            let angle = 0.02 * id as f32;
+            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        }
+
+        let max0 = config.max_degree(0);
+        assert_eq!(max0, 8);
+        let hub_degree = index.graph.edges(0, 0).len();
+        assert!(
+            hub_degree <= max0,
+            "hub degree {hub_degree} exceeded Mmax0 {max0}"
+        );
+        assert!(
+            hub_degree >= usize::from(config.new_node_neighbors(0)),
+            "hub should remain connected after nearby inserts"
+        );
+
+        for node in 0..index.graph.node_count() {
+            let meta = index.graph.node(node).unwrap();
+            for level in 0..=meta.level {
+                let degree = index.graph.edges(level, node).len();
+                let cap = config.max_degree(level);
+                assert!(
+                    degree <= cap,
+                    "node {node} level {level} degree {degree} exceeded {cap}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn upper_layer_degree_is_capped_at_m() {
+        let config = Config {
+            dim: 2,
+            m: 4,
+            ef_construction: 32,
+            max_level: 1,
+            level_mult: 0.0,
+            rng_seed: Some(2),
+            ..Config::default()
+        };
+        let mut index = HnswIndex::new(config).unwrap();
+        index.insert(0, &[1.0, 0.0]).unwrap();
+        for id in 1..=40 {
+            let angle = 0.03 * id as f32;
+            index.insert(id, &[angle.cos(), angle.sin()]).unwrap();
+        }
+
+        let max1 = config.max_degree(1);
+        assert_eq!(max1, 4);
+        assert!(index.graph.edges(1, 0).len() <= max1);
+        for node in 0..index.graph.node_count() {
+            assert!(index.graph.edges(1, node).len() <= max1);
+            assert!(index.graph.edges(0, node).len() <= config.max_degree(0));
+        }
     }
 
     #[test]
