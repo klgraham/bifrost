@@ -4,7 +4,6 @@ version = "0.2.0"
 edition = "2024"
 description = "A compact, mmap-friendly HNSW vector index"
 license = "MIT"
-documentation = "https://docs.rs/hnsw-rs"
 readme = "README.md"
 rust-version = "1.85"
 publish = false

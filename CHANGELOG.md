@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Drop the `documentation` crate metadata URL. It pointed at docs.rs/hnsw-rs,
+  which is not this unpublished crate (`publish = false`); crates.io `hnsw_rs`
+  is a different project.
 - Search hits copy the already-computed candidate distance instead of launching
   another cosine kernel. Live and mmap search share `hits_from_candidates`;
   equal distances still sort by external id.
