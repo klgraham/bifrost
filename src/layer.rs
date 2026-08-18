@@ -1,11 +1,74 @@
-use std::cmp::Ordering;
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+};
 
 use crate::{Error, Graph, NodeIndex, NodeMeta, Result, vector::cosine_distance_unchecked};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Candidate {
     pub node_index: NodeIndex,
     pub distance: f32,
+}
+
+impl PartialEq for Candidate {
+    fn eq(&self, other: &Self) -> bool {
+        compare_candidates(self, other) == Ordering::Equal
+    }
+}
+
+impl Eq for Candidate {}
+
+impl PartialOrd for Candidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Candidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_candidates(self, other)
+    }
+}
+
+/// Generation-stamped visit marks reused across layers of one search or insert.
+///
+/// Incrementing the generation is an O(1) clear. Wrapping back to 0 fills
+/// the stamp buffer and resumes at 1 so stale marks cannot collide.
+#[derive(Debug, Default)]
+pub(crate) struct VisitedList {
+    stamps: Vec<u32>,
+    generation: u32,
+}
+
+impl VisitedList {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Grows to `node_count` if needed and starts a new generation.
+    pub(crate) fn prepare(&mut self, node_count: usize) {
+        if self.stamps.len() < node_count {
+            self.stamps.resize(node_count, 0);
+        }
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.stamps.fill(0);
+            self.generation = 1;
+        }
+    }
+
+    /// Marks `node` as visited for the current generation.
+    ///
+    /// Returns `None` when `node` is outside the stamp buffer (callers skip
+    /// neighbors `>= visited.len()`, the mmap-safety check from loaded search).
+    /// `Some(true)` means the node was already marked this generation.
+    pub(crate) fn mark(&mut self, node: NodeIndex) -> Option<bool> {
+        let slot = self.stamps.get_mut(node as usize)?;
+        let seen = *slot == self.generation;
+        *slot = self.generation;
+        Some(seen)
+    }
 }
 
 #[derive(Debug)]
@@ -145,9 +208,22 @@ where
     G: SearchGraph,
     S: SearchVectors,
 {
-    search_layer_excluding(graph, store, entry_point, level, query, ef, None)
+    let mut visited = VisitedList::new();
+    search_layer_excluding(
+        graph,
+        store,
+        entry_point,
+        level,
+        query,
+        ef,
+        None,
+        &mut visited,
+    )
 }
 
+/// Greedy search at one layer. `visited` is prepared for this hop so a caller
+/// can reuse the stamp buffer across layers. The frontier is a min-heap on
+/// distance, then node index (the same order as the previous full-sort hop).
 pub(crate) fn search_layer_excluding<G, S>(
     graph: &G,
     store: &S,
@@ -156,6 +232,7 @@ pub(crate) fn search_layer_excluding<G, S>(
     query: &[f32],
     ef: u32,
     excluded: Option<NodeIndex>,
+    visited: &mut VisitedList,
 ) -> Result<SearchResult>
 where
     G: SearchGraph,
@@ -169,26 +246,25 @@ where
     }
 
     let ef = usize::try_from(ef.max(1)).expect("u32 fits usize on supported targets");
-    let mut visited = vec![false; graph.node_count() as usize];
-    let mut frontier = Vec::new();
-    let mut results = Vec::new();
-    let Some(entry_slot) = visited.get_mut(entry_point as usize) else {
+    visited.prepare(graph.node_count() as usize);
+    let Some(seen) = visited.mark(entry_point) else {
         return Err(Error::InvalidNode(entry_point));
     };
-    *entry_slot = true;
+    debug_assert!(!seen, "fresh generation must not have marked the entry");
+
+    let mut frontier = BinaryHeap::with_capacity(ef);
+    let mut results = Vec::new();
 
     if excluded != Some(entry_point) {
         let entry = Candidate {
             node_index: entry_point,
             distance: distance_to_node(store, entry_point, query)?,
         };
-        frontier.push(entry);
+        frontier.push(Reverse(entry));
         insert_bounded(&mut results, entry, ef);
     }
 
-    while !frontier.is_empty() {
-        frontier.sort_by(|left, right| compare_candidates(right, left));
-        let current = frontier.pop().expect("frontier is non-empty");
+    while let Some(Reverse(current)) = frontier.pop() {
         if results.len() >= ef
             && compare_candidates(
                 &current,
@@ -199,13 +275,13 @@ where
         }
 
         for neighbor in graph.neighbors(level, current.node_index) {
-            let Some(seen) = visited.get_mut(neighbor as usize) else {
+            // Neighbors outside the stamp buffer are skipped (mmap safety).
+            let Some(seen) = visited.mark(neighbor) else {
                 continue;
             };
-            if *seen {
+            if seen {
                 continue;
             }
-            *seen = true;
             if excluded == Some(neighbor) {
                 continue;
             }
@@ -228,13 +304,16 @@ where
                     results.last().expect("non-empty bounded results"),
                 ) == Ordering::Less
             {
-                frontier.push(candidate);
+                frontier.push(Reverse(candidate));
                 insert_bounded(&mut results, candidate, ef);
             }
         }
     }
 
-    results.sort_by(compare_candidates);
+    debug_assert!(
+        results.windows(2).all(|pair| pair[0] <= pair[1]),
+        "insert_bounded keeps results nearest-first with node-index ties"
+    );
     let nearest = results
         .first()
         .map_or(entry_point, |candidate| candidate.node_index);
@@ -265,9 +344,20 @@ where
         return Ok(Vec::new());
     };
 
+    let mut visited = VisitedList::new();
     let mut level = entry_level;
     while level > 0 {
-        entry_point = search_layer(graph, store, entry_point, level, query, 1)?.nearest;
+        entry_point = search_layer_excluding(
+            graph,
+            store,
+            entry_point,
+            level,
+            query,
+            1,
+            None,
+            &mut visited,
+        )?
+        .nearest;
         level -= 1;
     }
 
@@ -275,7 +365,8 @@ where
     // caller asking for more neighbors than `ef_search` still receives them.
     let requested = u32::try_from(k).unwrap_or(u32::MAX);
     let ef = u32::from(ef_search).max(requested);
-    let result = search_layer(graph, store, entry_point, 0, query, ef)?;
+    let result =
+        search_layer_excluding(graph, store, entry_point, 0, query, ef, None, &mut visited)?;
     Ok(result.candidates.into_iter().take(k).collect())
 }
 
@@ -453,6 +544,48 @@ mod tests {
     }
 
     #[test]
+    fn visited_list_marks_once_and_resets_on_wrap() {
+        let mut visited = VisitedList::new();
+        visited.prepare(2);
+        assert_eq!(visited.mark(0), Some(false));
+        assert_eq!(visited.mark(0), Some(true));
+        assert_eq!(visited.mark(1), Some(false));
+        assert_eq!(visited.mark(99), None);
+
+        visited.prepare(2);
+        assert_eq!(visited.mark(0), Some(false));
+        assert_eq!(visited.mark(1), Some(false));
+
+        visited.generation = u32::MAX;
+        visited.prepare(2);
+        assert_eq!(visited.generation, 1);
+        assert!(visited.stamps.iter().all(|stamp| *stamp == 0));
+        assert_eq!(visited.mark(0), Some(false));
+        assert_eq!(visited.mark(0), Some(true));
+    }
+
+    #[test]
+    fn search_breaks_distance_ties_by_node_index() {
+        let mut graph = graph_with_nodes(&[0, 0, 0]);
+        graph.add_bidirectional_edge(0, 0, 1).unwrap();
+        graph.add_bidirectional_edge(0, 0, 2).unwrap();
+        let data = [0.0, 1.0, 1.0];
+        let store = VectorStore {
+            data: &data,
+            offsets: &[0, 1, 2],
+            dim: 1,
+        };
+        let result = search_layer(&graph, &store, 0, 0, &[1.0], 3).unwrap();
+        let ids = result
+            .candidates
+            .iter()
+            .map(|candidate| candidate.node_index)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec![1, 2, 0]);
+        assert_eq!(result.candidates[0].distance, result.candidates[1].distance);
+    }
+
+    #[test]
     fn excluded_node_is_not_returned() {
         let mut graph = graph_with_nodes(&[0, 0, 0]);
         graph.add_bidirectional_edge(0, 0, 1).unwrap();
@@ -463,7 +596,9 @@ mod tests {
             offsets: &[0, 1, 2],
             dim: 1,
         };
-        let result = search_layer_excluding(&graph, &store, 0, 0, &[1.0], 3, Some(2)).unwrap();
+        let mut visited = VisitedList::new();
+        let result =
+            search_layer_excluding(&graph, &store, 0, 0, &[1.0], 3, Some(2), &mut visited).unwrap();
         assert!(
             result
                 .candidates

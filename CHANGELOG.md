@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Search marks visited nodes with a generation-stamped `u32` list reused across
+  layers of one query or insert (O(1) clear; wraparound fills and resumes at 1)
+  and keeps the candidate frontier in a binary heap. Ranking and node-index
+  ties match the previous full-bitmap / full-sort search. One stamp array
+  sized to `node_count` is still allocated per query (or grown during insert)
+  so membership stays O(1) without hashing; neighbors `>=` that length are
+  skipped.
 - Document that `HnswIndex::build` assigns IDs `0..n-1` and is a convenience
   for an empty index. A second `build`, or `build` after an insert that
   already used one of those IDs, returns `Error::DuplicateExternalId` and

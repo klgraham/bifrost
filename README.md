@@ -318,6 +318,12 @@ to `M` at layer 0 (`max(M / 2, 1)` at upper layers) for a new node and `2M` /
 `M` when shrinking an existing list. The peer keeps its link back to the hub;
 search follows outgoing edges only.
 
+Layer search (`search_knn` / `search_layer`, shared by `HnswIndex` and
+`LoadedHnsw`) marks visits with a generation-stamped buffer reused across
+layers of one query, and pops the candidate frontier from a binary heap
+instead of re-sorting it each hop. Results stay nearest-first with
+node-index tie-breaks. Neighbors outside the visit buffer are skipped.
+
 ## License
 
 MIT

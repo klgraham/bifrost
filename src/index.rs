@@ -5,7 +5,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use crate::{
     Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, NodeMeta, Result,
     layer::{
-        Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
+        Candidate, SearchGraph, VectorStore, VisitedList, search_knn, search_layer_excluding,
         select_neighbors_heuristic,
     },
     vector::cosine_distance_unchecked,
@@ -253,11 +253,21 @@ impl HnswIndex {
         };
         let previous_entry_level = self.entry_level;
 
+        let mut visited = VisitedList::new();
         let mut current_level = previous_entry_level;
         while current_level > level {
             let result = {
                 let store = self.vector_store();
-                search_layer(&self.graph, &store, entry_point, current_level, vector, 1)?
+                search_layer_excluding(
+                    &self.graph,
+                    &store,
+                    entry_point,
+                    current_level,
+                    vector,
+                    1,
+                    None,
+                    &mut visited,
+                )?
             };
             entry_point = result.nearest;
             current_level -= 1;
@@ -273,6 +283,7 @@ impl HnswIndex {
                 required_entry_level,
                 vector,
                 rollback,
+                &mut visited,
             )?;
             if current_level == 0 {
                 break;
@@ -469,6 +480,7 @@ impl HnswIndex {
         required_entry_level: u8,
         vector: &[f32],
         rollback: &mut InsertRollback,
+        visited: &mut VisitedList,
     ) -> Result<NodeIndex> {
         let max_neighbors = usize::from(self.config.new_node_neighbors(level));
         let candidates = {
@@ -481,6 +493,7 @@ impl HnswIndex {
                 vector,
                 u32::from(self.config.ef_construction),
                 Some(node_index),
+                visited,
             )?
             .candidates
         };
