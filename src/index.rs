@@ -5,8 +5,8 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use crate::{
     Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, NodeMeta, Result,
     layer::{
-        Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
-        select_neighbors_heuristic,
+        Candidate, SearchGraph, SearchResult, VectorStore, VisitedList, search_knn,
+        search_layer_excluding, select_neighbors_heuristic,
     },
     vector::cosine_distance_unchecked,
 };
@@ -84,6 +84,7 @@ pub struct HnswIndex {
     external_to_internal: HashMap<ExternalId, NodeIndex>,
     pub(crate) entry_point: Option<NodeIndex>,
     pub(crate) entry_level: u8,
+    visited: VisitedList,
     rng: StdRng,
     #[cfg(test)]
     fail_insert_after_append: bool,
@@ -126,6 +127,7 @@ impl HnswIndex {
             external_to_internal: HashMap::new(),
             entry_point: None,
             entry_level: 0,
+            visited: VisitedList::new(),
             rng: config
                 .rng_seed
                 .map_or_else(rand::make_rng, StdRng::seed_from_u64),
@@ -255,11 +257,9 @@ impl HnswIndex {
 
         let mut current_level = previous_entry_level;
         while current_level > level {
-            let result = {
-                let store = self.vector_store();
-                search_layer(&self.graph, &store, entry_point, current_level, vector, 1)?
-            };
-            entry_point = result.nearest;
+            entry_point = self
+                .search_from_entry(entry_point, current_level, vector, 1, None)?
+                .nearest;
             current_level -= 1;
         }
 
@@ -461,6 +461,31 @@ impl HnswIndex {
         }
     }
 
+    fn search_from_entry(
+        &mut self,
+        entry_point: NodeIndex,
+        level: u8,
+        vector: &[f32],
+        ef: u32,
+        excluded: Option<NodeIndex>,
+    ) -> Result<SearchResult> {
+        let store = VectorStore {
+            data: &self.vector_data,
+            offsets: &self.vector_offsets,
+            dim: self.config.dim,
+        };
+        search_layer_excluding(
+            &self.graph,
+            &store,
+            entry_point,
+            level,
+            vector,
+            ef,
+            excluded,
+            &mut self.visited,
+        )
+    }
+
     fn insert_layer(
         &mut self,
         entry_point: NodeIndex,
@@ -471,19 +496,15 @@ impl HnswIndex {
         rollback: &mut InsertRollback,
     ) -> Result<NodeIndex> {
         let max_neighbors = usize::from(self.config.new_node_neighbors(level));
-        let candidates = {
-            let store = self.vector_store();
-            search_layer_excluding(
-                &self.graph,
-                &store,
+        let candidates = self
+            .search_from_entry(
                 entry_point,
                 level,
                 vector,
                 u32::from(self.config.ef_construction),
                 Some(node_index),
             )?
-            .candidates
-        };
+            .candidates;
         let selected = {
             let store = self.vector_store();
             select_neighbors_heuristic(&store, &candidates, max_neighbors)
