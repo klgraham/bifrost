@@ -30,9 +30,9 @@ fn main() {
         .collect::<Vec<_>>();
 
     run("dot/f32x384", iterations, || {
-        black_box(dot(black_box(&left), black_box(&right)));
+        black_box(dot(black_box(&left), black_box(&right)).expect("equal lengths"));
     });
     run("cosine_distance/f32x384", iterations, || {
-        black_box(cosine_distance(black_box(&left), black_box(&right)));
+        black_box(cosine_distance(black_box(&left), black_box(&right)).expect("equal lengths"));
     });
 }

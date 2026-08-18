@@ -18,7 +18,7 @@ pub fn check_normalized_vector(vector: &[f32]) -> Result<()> {
     if !vector.iter().all(|value| value.is_finite()) {
         return Err(Error::InvalidVector("coordinates must be finite"));
     }
-    let norm = dot(vector, vector).sqrt();
+    let norm = dot_unchecked(vector, vector).sqrt();
     if !norm.is_finite() || (norm - 1.0).abs() > UNIT_NORM_TOLERANCE {
         return Err(Error::InvalidVector("norm must be within 0.01 of one"));
     }
@@ -38,13 +38,34 @@ pub(crate) fn validate_input_vector(vector: &[f32], enforce: bool) -> Result<()>
     Ok(())
 }
 
+fn check_equal_len(a: &[f32], b: &[f32]) -> Result<()> {
+    if a.len() != b.len() {
+        return Err(Error::DimensionMismatch {
+            expected: a.len(),
+            actual: b.len(),
+        });
+    }
+    Ok(())
+}
+
 /// Returns the dot product of equal-length vectors.
 ///
 /// AVX2 and NEON kernels use eight partial sums. Every other target uses the
-/// safe scalar fallback.
-#[must_use]
-pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "dot product dimensions must match");
+/// safe scalar fallback. Lengths that do not match return
+/// [`Error::DimensionMismatch`] with `expected` taken from `a` and `actual`
+/// from `b`.
+pub fn dot(a: &[f32], b: &[f32]) -> Result<f32> {
+    check_equal_len(a, b)?;
+    Ok(dot_unchecked(a, b))
+}
+
+/// Dot product after the caller has already matched lengths.
+///
+/// Insert and search use this after [`crate::HnswIndex`] / [`crate::LoadedHnsw`]
+/// `check_dimension`. Debug builds assert the lengths still match.
+#[inline]
+pub(crate) fn dot_unchecked(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len(), "dot product dimensions must match");
 
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("avx2") {
@@ -152,22 +173,31 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
 /// This is `1 - dot(a, b)` and does not inspect finiteness or norm.
 /// Insert and search `debug_assert` that contract, and return
 /// [`Error::InvalidVector`] when [`crate::Config::check_vectors`] is set.
-#[must_use]
-pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-    1.0 - dot(a, b)
+/// Lengths that do not match return [`Error::DimensionMismatch`].
+pub fn cosine_distance(a: &[f32], b: &[f32]) -> Result<f32> {
+    check_equal_len(a, b)?;
+    Ok(cosine_distance_unchecked(a, b))
+}
+
+/// `1 - dot(a, b)` after the caller has already matched lengths.
+#[inline]
+pub(crate) fn cosine_distance_unchecked(a: &[f32], b: &[f32]) -> f32 {
+    1.0 - dot_unchecked(a, b)
 }
 
 /// Cosine similarity for arbitrary vectors.
-#[must_use]
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "cosine dimensions must match");
-    let dot_product = dot(a, b);
-    let a_squared = dot(a, a);
-    let b_squared = dot(b, b);
+///
+/// Lengths that do not match return [`Error::DimensionMismatch`]. A zero
+/// vector or a zero inner product yields `0.0`.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<f32> {
+    check_equal_len(a, b)?;
+    let dot_product = dot_unchecked(a, b);
+    let a_squared = dot_unchecked(a, a);
+    let b_squared = dot_unchecked(b, b);
     if dot_product == 0.0 || a_squared == 0.0 || b_squared == 0.0 {
-        return 0.0;
+        return Ok(0.0);
     }
-    dot_product / (a_squared.sqrt() * b_squared.sqrt())
+    Ok(dot_product / (a_squared.sqrt() * b_squared.sqrt()))
 }
 
 #[cfg(test)]
@@ -177,21 +207,54 @@ mod tests {
 
     #[test]
     fn dot_product_is_correct() {
-        assert!((dot(&[1.0, 2.0, 3.0, 4.0], &[2.0, 3.0, 4.0, 5.0]) - 40.0).abs() < 0.001);
+        assert!((dot(&[1.0, 2.0, 3.0, 4.0], &[2.0, 3.0, 4.0, 5.0]).unwrap() - 40.0).abs() < 0.001);
     }
 
     #[test]
     fn cosine_distance_for_unit_vectors() {
         let a = [1.0, 0.0, 0.0, 0.0];
-        assert!(cosine_distance(&a, &a).abs() < 0.001);
-        assert!((cosine_distance(&a, &[0.0, 1.0, 0.0, 0.0]) - 1.0).abs() < 0.001);
-        assert!((cosine_distance(&a, &[-1.0, 0.0, 0.0, 0.0]) - 2.0).abs() < 0.001);
+        assert!(cosine_distance(&a, &a).unwrap().abs() < 0.001);
+        assert!((cosine_distance(&a, &[0.0, 1.0, 0.0, 0.0]).unwrap() - 1.0).abs() < 0.001);
+        assert!((cosine_distance(&a, &[-1.0, 0.0, 0.0, 0.0]).unwrap() - 2.0).abs() < 0.001);
     }
 
     #[test]
     fn general_cosine_handles_zero_vectors() {
-        assert!((cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 0.001);
-        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+        assert!((cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]).unwrap() - 1.0).abs() < 0.001);
+        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn public_distance_helpers_return_dimension_mismatch() {
+        let mismatch = Error::DimensionMismatch {
+            expected: 1,
+            actual: 2,
+        };
+        assert!(matches!(
+            dot(&[1.0], &[1.0, 0.0]),
+            Err(Error::DimensionMismatch {
+                expected: 1,
+                actual: 2
+            })
+        ));
+        assert!(matches!(
+            cosine_distance(&[1.0], &[1.0, 0.0]),
+            Err(Error::DimensionMismatch {
+                expected: 1,
+                actual: 2
+            })
+        ));
+        assert!(matches!(
+            cosine_similarity(&[1.0], &[1.0, 0.0]),
+            Err(Error::DimensionMismatch {
+                expected: 1,
+                actual: 2
+            })
+        ));
+        assert_eq!(
+            dot(&[1.0], &[1.0, 0.0]).unwrap_err().to_string(),
+            mismatch.to_string()
+        );
     }
 
     #[test]
@@ -230,6 +293,6 @@ mod tests {
         let right = (0..19)
             .map(|value| (19 - value) as f32 / 19.0)
             .collect::<Vec<_>>();
-        assert!((dot(&left, &right) - dot_scalar(&left, &right)).abs() < 0.000_01);
+        assert!((dot(&left, &right).unwrap() - dot_scalar(&left, &right)).abs() < 0.000_01);
     }
 }

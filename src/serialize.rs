@@ -22,7 +22,7 @@ use crate::{
     Config, Error, HnswIndex, NodeIndex, NodeMeta, Result, SearchHit,
     index::hits_from_candidates,
     layer::{SearchGraph, SearchVectors, search_knn},
-    vector::cosine_distance,
+    vector::cosine_distance_unchecked,
 };
 
 pub const MAGIC: u32 = 0x484e_5357;
@@ -357,7 +357,7 @@ impl SearchVectors for MappedVectors<'_> {
         view.copy_into(&mut scratch).ok_or(Error::InvalidFile(
             "mapped vector length does not match dim",
         ))?;
-        Ok(cosine_distance(&scratch, query))
+        Ok(cosine_distance_unchecked(&scratch, query))
     }
 }
 

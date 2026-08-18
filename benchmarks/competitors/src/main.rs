@@ -754,7 +754,7 @@ fn exact_top_k(vectors: &[Vec<f32>], queries: &[Vec<f32>], k: usize) -> Vec<Vec<
             let mut scores = vectors
                 .iter()
                 .enumerate()
-                .map(|(id, vector)| (dot(vector, query), id as u32))
+                .map(|(id, vector)| (dot(vector, query).expect("equal lengths"), id as u32))
                 .collect::<Vec<_>>();
             scores.select_nth_unstable_by(k - 1, |left, right| {
                 right

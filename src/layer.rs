@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::{Error, Graph, NodeIndex, NodeMeta, Result, vector::cosine_distance};
+use crate::{Error, Graph, NodeIndex, NodeMeta, Result, vector::cosine_distance_unchecked};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Candidate {
@@ -57,7 +57,7 @@ impl SearchGraph for Graph {
 
 impl SearchVectors for VectorStore<'_> {
     fn distance(&self, node_index: NodeIndex, query: &[f32]) -> Result<f32> {
-        Ok(cosine_distance(self.get(node_index), query))
+        Ok(cosine_distance_unchecked(self.get(node_index), query))
     }
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn select_neighbors_heuristic(
         }
         let vector = store.get(candidate.node_index);
         let diverse = selected.iter().all(|chosen| {
-            cosine_distance(store.get(chosen.node_index), vector) >= candidate.distance
+            cosine_distance_unchecked(store.get(chosen.node_index), vector) >= candidate.distance
         });
         if diverse {
             selected.push(candidate);
@@ -341,7 +341,7 @@ mod tests {
         let candidates = (0..3)
             .map(|node| Candidate {
                 node_index: node,
-                distance: cosine_distance(store.get(node), &query),
+                distance: cosine_distance_unchecked(store.get(node), &query),
             })
             .collect::<Vec<_>>();
 

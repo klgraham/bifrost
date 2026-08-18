@@ -8,7 +8,7 @@ use crate::{
         Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
         select_neighbors_heuristic,
     },
-    vector::cosine_distance,
+    vector::cosine_distance_unchecked,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -491,7 +491,7 @@ impl HnswIndex {
             .into_iter()
             .map(|neighbor| Candidate {
                 node_index: neighbor,
-                distance: cosine_distance(store.get(neighbor), query),
+                distance: cosine_distance_unchecked(store.get(neighbor), query),
             })
             .collect::<Vec<_>>();
         let kept = select_neighbors_heuristic(&store, &scored, max_degree)
@@ -578,7 +578,7 @@ fn select_entry_point_for_level(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vector::cosine_distance;
+    use crate::vector::cosine_distance_unchecked;
 
     fn config(dim: u16) -> Config {
         Config {
@@ -1355,7 +1355,7 @@ mod tests {
             let mut exact = vectors
                 .iter()
                 .enumerate()
-                .map(|(id, vector)| (id as u32, cosine_distance(vector, &query)))
+                .map(|(id, vector)| (id as u32, cosine_distance_unchecked(vector, &query)))
                 .collect::<Vec<_>>();
             exact.sort_by(|left, right| {
                 left.1

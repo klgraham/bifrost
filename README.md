@@ -42,7 +42,10 @@ assert_eq!(hits[0].id, 100);
 ```
 
 `insert` and `search` return a dimension error instead of panicking when a
-slice does not match `Config::dim`. Duplicate external IDs are rejected.
+slice does not match `Config::dim`. The public helpers `vector::dot`,
+`vector::cosine_distance`, and `vector::cosine_similarity` also return
+`Error::DimensionMismatch` when their arguments have different lengths.
+Duplicate external IDs are rejected.
 Non-finite or badly normalized vectors `debug_assert` in debug builds; set
 `Config::check_vectors` (or `set_check_vectors` on a live index or mapped
 snapshot) to return `Error::InvalidVector` in release as well.
@@ -71,8 +74,9 @@ A configured seed is repeatable with the pinned dependency version.
 HNSW construction and search use `1 - dot(a, b)`. Inputs must therefore be
 unit-normalized. This is the fast form of cosine distance and ranges from 0 for
 identical unit vectors to 2 for opposite vectors. Use
-`hnsw_rs::vector::cosine_similarity` when working with arbitrary vectors, but
-normalize them before inserting them into an index.
+`hnsw_rs::vector::cosine_similarity` when working with arbitrary vectors
+(it returns `Error::DimensionMismatch` on length mismatch), but normalize
+them before inserting them into an index.
 
 Debug builds `debug_assert` that every insert and search vector is finite and
 that `||v||` is within `0.01` of `1` (the same tolerance as the FiQA preparer,
