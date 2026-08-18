@@ -14,7 +14,7 @@ acceleration, and `.hnsw` v3 persistence.
 - Cosine distance optimized for pre-normalized vectors
 - AVX2 on detected `x86_64` CPUs, NEON on `aarch64`, and a scalar fallback
 - Memory-mapped, bounds-checked file access
-- CRC-32 integrity checking and atomic v2-to-v3 migration
+- CRC-32 integrity checking and atomic snapshot replace (save and v2-to-v3 migration)
 - Deterministic v3 persistence with byte-for-byte fixture coverage
 
 Deletion, updates, concurrent mutation, filtering, and quantization are not
@@ -117,6 +117,14 @@ overrides the stored `ef_search` on both the builder and the mapped snapshot.
 values are decoded from explicit little-endian bytes rather than obtained
 through unaligned pointer casts.
 
+The file is opened read-only. Do not truncate, overwrite in place, or otherwise
+mutate a mapped `.hnsw` file while a `LoadedHnsw` for that path is alive: a
+shared `[u8]` mapping is unsound if those bytes change. `save` / `save_file`
+and v2-to-v3 migration write `.{name}.tmp-{pid}-{nonce}`, `sync_all`, then
+`rename` over the destination, so a crash mid-write cannot replace a previous
+good file with a truncated one, and an existing mapping stays attached to the
+previous inode.
+
 The v3 format contains:
 
 1. A 64-byte header, including configuration, entry-point metadata, and CRC.
@@ -126,8 +134,8 @@ The v3 format contains:
 5. Flattened dense `u32` neighbor indexes.
 
 The CRC covers every byte after the header. Valid v2 files are rewritten to v3
-through a flushed temporary file and same-directory atomic rename before being
-returned to the caller.
+through the same flushed temporary file and same-directory atomic rename before
+being returned to the caller.
 
 Serde is intentionally not used for this file format. `.hnsw` is a fixed
 cross-language byte layout, not general Rust object serialization; Serde would
