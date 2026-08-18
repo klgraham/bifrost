@@ -195,8 +195,9 @@ A separate Ubuntu job clippy-checks the competitor crate (including
 `fiqa-prep`) and runs its unit tests with default features, so USearch's C++17
 backend and NumKong kernels are compiled and the local fixture test covers
 `level_mult` / `ef_search` wiring without downloading BEIR FiQA. That job
-installs `gcc`/`g++` and sets `CC`/`CXX` to them (clang 18 can crash compiling
-NumKong).
+installs `gcc`/`g++` and uses them as `CC`/`CXX` and the Rust linker (clang 18
+can crash compiling NumKong, and clang-as-`cc` plus rust-lld may not find
+`libstdc++`).
 
 The persistence suite loads a deterministic v3 golden file and requires the
 writer to reproduce all 220 bytes exactly. Its SHA-256 is documented in

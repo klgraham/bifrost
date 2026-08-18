@@ -24,13 +24,15 @@ jobs:
 
   # Isolated crate: clippy + unit tests only. Default features omit fiqa-prep, so
   # nothing downloads BEIR FiQA. USearch 2.26 compiles a C++17 cxx backend plus
-  # NumKong C SIMD kernels (no CMake). Force gcc/g++: some clang 18 frontends
-  # crash on NumKong's dispatch_other.c.
+  # NumKong C SIMD kernels (no CMake). Force gcc/g++ as compiler and linker:
+  # some clang 18 frontends crash on NumKong's dispatch_other.c, and rust-lld
+  # invoked via clang-as-cc cannot find libstdc++.
   competitors:
     runs-on: ubuntu-latest
     env:
       CC: gcc
       CXX: g++
+      RUSTFLAGS: "-C linker=gcc"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
