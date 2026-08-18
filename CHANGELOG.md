@@ -19,6 +19,8 @@
   vector.
 - Search uses `max(ef_search, k)` so requesting more neighbors than the
   configured candidate width still returns up to `k` hits.
+- Add `HnswIndex::search_with_ef` so live search can override candidate width
+  the same way as `LoadedHnsw::search_with_ef`.
 - Reject snapshots whose entry node does not exist at `entry_level`.
 
 ## 0.2.0 - 2026-07-18
@@ -50,7 +52,8 @@
   slices cast directly from file bytes.
 - `LoadedHnsw::search` / `LoadedHnsw::open` query a saved snapshot without
   reconstructing a mutable index.
-- Search candidate width is `max(ef_search, k)`.
+- Search candidate width is `max(ef_search, k)` on `search` and
+  `search_with_ef` for both `HnswIndex` and `LoadedHnsw`.
 - Neighbor selection uses the diversity heuristic for both insert and prune.
 - Reverse-link pruning caps outgoing degree at `2M` (layer 0) and `M` (upper
   layers) and leaves the opposite directed edge in place.

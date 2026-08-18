@@ -22,7 +22,10 @@ pub struct SearchHit {
 /// Persist a built index with [`HnswIndex::save`] and later reopen it for
 /// query-only search with [`HnswIndex::load`]. Construction parameters such as
 /// [`Config::m`] and [`Config::dim`] are fixed at [`HnswIndex::new`]; use
-/// [`HnswIndex::set_ef_search`] to change the query candidate width. The graph
+/// [`HnswIndex::set_ef_search`] to change the stored query candidate width, or
+/// [`HnswIndex::search_with_ef`] to override it for one query. Search uses
+/// `max(ef_search, k)` so a request larger than the stored width still returns
+/// up to `k` hits. The graph
 /// is inspectable through read-only accessors and cannot be replaced. Neighbor
 /// lists are chosen with the paper / hnswlib diversity heuristic. After
 /// reverse-link pruning, adjacency may be directed: a dropped outgoing edge is
@@ -132,6 +135,10 @@ impl HnswIndex {
     }
 
     /// Sets the layer-0 candidate width used by [`HnswIndex::search`].
+    ///
+    /// [`HnswIndex::search_with_ef`] overrides this value for a single query
+    /// without mutating the stored config. Both methods still search with
+    /// `max(ef, k)`.
     pub fn set_ef_search(&mut self, ef_search: u16) {
         self.config.ef_search = ef_search;
     }
@@ -223,8 +230,17 @@ impl HnswIndex {
     ///
     /// Layer 0 uses a candidate width of `max(ef_search, k)`, matching HNSW /
     /// hnswlib, so asking for more hits than [`Config::ef_search`] still
-    /// returns up to `k` results when the graph contains them.
+    /// returns up to `k` results when the graph contains them. Call
+    /// [`HnswIndex::search_with_ef`] to override the stored width for one query.
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
+        self.search_with_ef(query, k, self.config.ef_search)
+    }
+
+    /// Searches using an explicit layer-0 candidate width.
+    ///
+    /// The search width is `max(ef, k)`. The stored [`Config::ef_search`] is
+    /// unchanged; use [`HnswIndex::set_ef_search`] to persist a new default.
+    pub fn search_with_ef(&self, query: &[f32], k: usize, ef: u16) -> Result<Vec<SearchHit>> {
         self.check_dimension(query)?;
         let store = self.vector_store();
         let candidates = search_knn(
@@ -232,7 +248,7 @@ impl HnswIndex {
             &store,
             query,
             k,
-            self.config.ef_search,
+            ef,
             self.entry_point,
             self.entry_level,
         )?;
@@ -831,6 +847,9 @@ mod tests {
         }
         let hits = index.search(&[1.0, 0.0], 4).unwrap();
         assert_eq!(hits.len(), 4);
+        assert_eq!(index.search_with_ef(&[1.0, 0.0], 4, 2).unwrap(), hits);
+        assert_eq!(index.search_with_ef(&[1.0, 0.0], 1, 2).unwrap().len(), 1);
+        assert_eq!(index.config().ef_search, 2);
     }
 
     #[test]
