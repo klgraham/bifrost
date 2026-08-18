@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Document that `HnswIndex::build` assigns IDs `0..n-1` and is a convenience
+  for an empty index. A second `build`, or `build` after an insert that
+  already used one of those IDs, returns `Error::DuplicateExternalId` and
+  does not replace the graph. Use `insert` to append with caller-chosen IDs.
 - Public `dot`, `cosine_distance`, and `cosine_similarity` return
   `Error::DimensionMismatch` instead of asserting equal lengths. Inner
   kernels `debug_assert` after insert/search `check_dimension`.
@@ -105,3 +109,6 @@
   `has_edge`, and `degree` inspect adjacency without allowing replacement.
 - `HnswIndex::insert` is transactional: failure after the node is appended
   rolls back storage, adjacency (including prune), and the external-ID map.
+- `HnswIndex::build` assigns dense IDs starting at zero. It is a convenience
+  for an empty index; a second `build` or any colliding ID returns
+  `Error::DuplicateExternalId`. Use `insert` to append.

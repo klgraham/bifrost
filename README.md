@@ -45,7 +45,11 @@ assert_eq!(hits[0].id, 100);
 slice does not match `Config::dim`. The public helpers `vector::dot`,
 `vector::cosine_distance`, and `vector::cosine_similarity` also return
 `Error::DimensionMismatch` when their arguments have different lengths.
-Duplicate external IDs are rejected.
+Duplicate external IDs are rejected. `HnswIndex::build` is a convenience for
+an empty index: it inserts the batch with dense IDs `0..n-1`. A second
+`build`, or `build` after any insert that already used one of those IDs,
+returns `Error::DuplicateExternalId`. Use `insert` to append with
+caller-chosen IDs.
 Non-finite or badly normalized vectors `debug_assert` in debug builds; set
 `Config::check_vectors` (or `set_check_vectors` on a live index or mapped
 snapshot) to return `Error::InvalidVector` in release as well.

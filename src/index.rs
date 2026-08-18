@@ -27,7 +27,9 @@ pub struct SearchHit {
 /// `max(ef_search, k)` so a request larger than the stored width still returns
 /// up to `k` hits. Insert and search `debug_assert` finite, near-unit vectors;
 /// [`Config::check_vectors`] / [`HnswIndex::set_check_vectors`] make those
-/// failures [`Error::InvalidVector`]. The graph
+/// failures [`Error::InvalidVector`]. [`HnswIndex::build`] assigns IDs
+/// `0..n-1` and is a convenience for an empty index; a second `build` or any
+/// colliding ID returns [`Error::DuplicateExternalId`]. The graph
 /// is inspectable through read-only accessors and cannot be replaced. Neighbor
 /// lists are chosen with the paper / hnswlib diversity heuristic. After
 /// reverse-link pruning, adjacency may be directed: a dropped outgoing edge is
@@ -317,6 +319,37 @@ impl HnswIndex {
     }
 
     /// Inserts a batch and assigns dense external IDs starting at zero.
+    ///
+    /// This is a convenience for an **empty** index. The `i`th vector is
+    /// inserted as ID `i`, so IDs are always `0..vectors.len()`. A second
+    /// [`HnswIndex::build`], or `build` after any [`HnswIndex::insert`] that
+    /// already used one of those IDs (including `insert(0, …)`), returns
+    /// [`Error::DuplicateExternalId`]. When the collision is on the first
+    /// assigned ID, the graph is unchanged. Use [`HnswIndex::insert`] to
+    /// append with caller-chosen IDs.
+    ///
+    /// Vectors are checked the same way as [`HnswIndex::insert`].
+    ///
+    /// # Examples
+    ///
+    /// A second `build` is rejected and does not replace the existing graph:
+    ///
+    /// ```
+    /// # use hnsw_rs::{Config, Error, HnswIndex};
+    /// let mut index = HnswIndex::new(Config {
+    ///     dim: 2,
+    ///     rng_seed: Some(1),
+    ///     ..Config::default()
+    /// })?;
+    /// index.build(&[&[1.0, 0.0], &[0.0, 1.0]])?;
+    /// assert_eq!(index.len(), 2);
+    /// assert!(matches!(
+    ///     index.build(&[&[1.0, 0.0]]),
+    ///     Err(Error::DuplicateExternalId(0))
+    /// ));
+    /// assert_eq!(index.len(), 2);
+    /// # Ok::<(), hnsw_rs::Error>(())
+    /// ```
     pub fn build(&mut self, vectors: &[&[f32]]) -> Result<()> {
         for (index, vector) in vectors.iter().enumerate() {
             let id = u32::try_from(index).map_err(|_| Error::CapacityExceeded("external ID"))?;
@@ -676,6 +709,9 @@ mod tests {
         );
     }
 
+    /// Documented contract: `build` always assigns `0..n-1`, so a second
+    /// `build` or `build` after `insert(0, …)` is `DuplicateExternalId` and
+    /// leaves the graph unchanged. Callers who need to append use `insert`.
     #[test]
     fn build_on_non_empty_index_rejects_colliding_ids() {
         let mut index = HnswIndex::new(config(3)).unwrap();
