@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Search hits copy the already-computed candidate distance instead of launching
+  another cosine kernel. Live and mmap search share `hits_from_candidates`;
+  equal distances still sort by external id.
 - Search marks visited nodes with a generation-stamped `u32` list reused across
   layers of one query (and across inserts on a live `HnswIndex`) and keeps the
   candidate frontier in a binary heap. Ranking and node-index ties match the

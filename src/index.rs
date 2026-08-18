@@ -11,6 +11,10 @@ use crate::{
     vector::cosine_distance_unchecked,
 };
 
+/// A nearest-neighbor result.
+///
+/// `distance` is the cosine distance already computed for the search
+/// candidate. Hits are sorted nearest-first, then by [`ExternalId`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SearchHit {
     pub id: ExternalId,
@@ -92,6 +96,10 @@ pub struct HnswIndex {
     fail_insert_after_first_link: bool,
 }
 
+/// Builds owned hits from layer-0 search candidates.
+///
+/// Uses each [`Candidate::distance`] instead of recomputing cosine distance.
+/// Results are nearest-first; equal distances sort by external id.
 pub(crate) fn hits_from_candidates<G: SearchGraph>(
     graph: &G,
     candidates: Vec<Candidate>,
@@ -762,6 +770,41 @@ mod tests {
         let result = index.search(&[1.0, 0.0, 0.0, 0.0], 1).unwrap();
         assert_eq!(result[0].id, 7);
         assert!(result[0].distance.abs() < 0.001);
+    }
+
+    #[test]
+    fn hits_from_candidates_reuse_distance_and_tie_break_by_id() {
+        let mut index = HnswIndex::new(config(2)).unwrap();
+        index.insert(20, &[1.0, 0.0]).unwrap();
+        index.insert(10, &[0.0, 1.0]).unwrap();
+        // Plant distances that a cosine recompute against either stored
+        // vector would not produce (self-distance 0, orthogonal 1).
+        let hits = hits_from_candidates(
+            &index.graph,
+            vec![
+                Candidate {
+                    node_index: 0,
+                    distance: 0.5,
+                },
+                Candidate {
+                    node_index: 1,
+                    distance: 0.5,
+                },
+            ],
+        );
+        assert_eq!(
+            hits,
+            [
+                SearchHit {
+                    id: 10,
+                    distance: 0.5,
+                },
+                SearchHit {
+                    id: 20,
+                    distance: 0.5,
+                },
+            ]
+        );
     }
 
     #[test]
