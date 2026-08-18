@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use hnsw_rs::{Config, HnswIndex, VERSION, load_file};
 
@@ -21,9 +25,11 @@ fn v3_fixture() -> Vec<u8> {
 
 fn temporary_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "hnsw-rs-interop-{label}-{}-{:?}.hnsw",
+        "hnsw-rs-interop-{label}-{}-{}.hnsw",
         std::process::id(),
         SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos())
     ))
 }
 

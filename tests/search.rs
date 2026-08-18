@@ -1,12 +1,18 @@
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use hnsw_rs::{Config, Error, HnswIndex, LoadedHnsw};
 
 fn temporary_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "hnsw-rs-search-{label}-{}-{:?}.hnsw",
+        "hnsw-rs-search-{label}-{}-{}.hnsw",
         std::process::id(),
         SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos())
     ))
 }
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- CI clippy-checks and unit-tests the competitor crate (no FiQA download) and
+  runs library tests on Windows as well as Ubuntu and macOS. The competitor
+  `Config` init uses `..Config::default()` so new fields such as
+  `check_vectors` do not break the bench. Integration-test temp paths use a
+  numeric nonce so Windows does not treat `SystemTime`'s Debug form as an
+  invalid path.
 - Drop the `documentation` crate metadata URL. It pointed at docs.rs/hnsw-rs,
   which is not this unpublished crate (`publish = false`); crates.io `hnsw_rs`
   is a different project.
