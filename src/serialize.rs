@@ -149,8 +149,9 @@ impl LoadedHnsw {
 
     /// Searches using an explicit layer-0 candidate width.
     ///
-    /// The search width is `max(ef, k)`. The graph and vectors stay mapped;
-    /// nothing is copied into an owned [`HnswIndex`].
+    /// The search width is `max(ef, k)`, matching [`HnswIndex::search_with_ef`].
+    /// The graph and vectors stay mapped; nothing is copied into an owned
+    /// [`HnswIndex`].
     pub fn search_with_ef(&self, query: &[f32], k: usize, ef: u16) -> Result<Vec<SearchHit>> {
         self.check_dimension(query)?;
         let store = MappedVectors {

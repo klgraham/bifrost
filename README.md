@@ -50,7 +50,8 @@ graph cannot be mutated after construction: inspect neighbors with
 `edges` / `degree` / `layer_count`. Search uses a layer-0
 candidate width of `max(ef_search, k)`, so asking for more hits than
 `Config::ef_search` still returns up to `k` neighbors when the graph contains
-them. A new node keeps at most `M` neighbors at layer 0 and
+them. `search_with_ef` uses `max(ef, k)` for one query without changing the
+stored width. A new node keeps at most `M` neighbors at layer 0 and
 `max(M / 2, 1)` at upper layers, chosen with the Malkov & Yashunin / hnswlib
 diversity heuristic (keep a candidate if it is closer to the new node than to
 any already chosen neighbor). After each reverse link, the neighbor's
@@ -107,7 +108,9 @@ assert_eq!(hits[0].id, 7);
 `HnswIndex::load` is the same query-only mapping and does not rebuild a
 mutable index. Loaded files remain memory-mapped: `search` walks the on-disk
 graph and vectors without re-inserting them, using `max(ef_search, k)` as the
-candidate width. `search_with_ef` overrides the stored `ef_search`. `node`,
+candidate width, matching live `HnswIndex::search`. `search_with_ef`
+overrides the stored `ef_search` on both the builder and the mapped snapshot.
+`node`,
 `vector`, and `edges` expose checked views tied to the mapping's lifetime;
 values are decoded from explicit little-endian bytes rather than obtained
 through unaligned pointer casts.

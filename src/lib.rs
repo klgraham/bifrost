@@ -3,7 +3,9 @@
 //! It supports incremental insertion, approximate nearest-neighbor search with
 //! cosine distance, and mmap-friendly `.hnsw` v3 persistence. Saved snapshots
 //! can be mapped with [`load_file`] / [`LoadedHnsw::open`] and searched in place
-//! through [`LoadedHnsw::search`].
+//! through [`LoadedHnsw::search`]. Query width is `max(ef_search, k)` on both
+//! [`HnswIndex::search`] and [`LoadedHnsw::search`]; `search_with_ef` overrides
+//! the stored candidate width for a single query.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
