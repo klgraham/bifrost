@@ -655,8 +655,9 @@ fn build_ours(vectors: &[Vec<f32>], parameters: Parameters) -> HnswIndex {
         ef_construction: parameters.ef_construction as u16,
         ef_search: parameters.ef_search as u16,
         max_level: 16,
-        // Standard HNSW level sampling reaches level L with probability M^-L.
-        level_mult: 1.0 - 1.0 / parameters.m as f64,
+        // Same paper / hnswlib default as Config::default() for M=16:
+        // P(level >= L) = M^{-L}.
+        level_mult: Config::level_mult_for_m(parameters.m as u8),
         rng_seed: Some(parameters.seed),
     })
     .expect("valid hnsw-rs benchmark configuration");

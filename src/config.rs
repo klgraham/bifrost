@@ -28,6 +28,14 @@ pub struct Config {
     /// Highest level that may be assigned to a node.
     pub max_level: u8,
     /// Probability of stopping at the current randomly selected level.
+    ///
+    /// Insertion stops at the current level with this probability, so
+    /// `P(level >= L) = (1 - level_mult)^L`. [`Config::default`] uses
+    /// [`Config::level_mult_for_m`] (`1.0 - 1.0 / m`) so
+    /// `P(level >= L) = m^{-L}`, matching the HNSW paper and hnswlib.
+    /// `1.0` always assigns level zero; `0.0` always assigns
+    /// [`Config::max_level`]. Stored snapshots may keep any finite value in
+    /// `[0, 1]`, including the former `0.5` default.
     pub level_mult: f64,
     /// Optional seed for repeatable construction with the pinned `rand` version.
     /// Operating-system entropy is used when absent.
@@ -36,19 +44,31 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let m = 16;
         Self {
             dim: 384,
-            m: 16,
+            m,
             ef_construction: 200,
             ef_search: 100,
             max_level: 16,
-            level_mult: 0.5,
+            level_mult: Self::level_mult_for_m(m),
             rng_seed: None,
         }
     }
 }
 
 impl Config {
+    /// Stop probability that yields `P(level >= L) = m^{-L}`.
+    ///
+    /// This is the HNSW paper / hnswlib formula: `1.0 - 1.0 / m`. `m` must
+    /// be greater than zero. `level_mult` is stored independently of `m`, so
+    /// a struct update that changes only `m` should call this if the paper
+    /// distribution is wanted.
+    #[must_use]
+    pub fn level_mult_for_m(m: u8) -> f64 {
+        1.0 - 1.0 / f64::from(m)
+    }
+
     pub(crate) fn validate(self) -> Result<Self> {
         if self.dim == 0 {
             return Err(Error::InvalidConfig("dim must be greater than zero"));
@@ -114,9 +134,24 @@ mod tests {
                 ef_construction: 200,
                 ef_search: 100,
                 max_level: 16,
-                level_mult: 0.5,
+                level_mult: 0.9375,
                 rng_seed: None,
             }
+        );
+        assert_eq!(Config::default().level_mult, Config::level_mult_for_m(16));
+        assert_eq!(Config::level_mult_for_m(16), 1.0 - 1.0 / 16.0);
+        assert_eq!(Config::level_mult_for_m(8), 1.0 - 1.0 / 8.0);
+    }
+
+    #[test]
+    fn historical_level_mult_half_still_validates() {
+        assert!(
+            Config {
+                level_mult: 0.5,
+                ..Config::default()
+            }
+            .validate()
+            .is_ok()
         );
     }
 

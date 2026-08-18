@@ -73,9 +73,13 @@ normalize them before inserting them into an index.
 
 ### Level multiplier
 
-`Config::level_mult` is the probability of stopping at the current level.
-`1.0` always assigns level zero; `0.0` always assigns `max_level`. The default
-is `0.5`.
+`Config::level_mult` is the probability of stopping at the current level, so
+`P(level >= L) = (1 - level_mult)^L`. `1.0` always assigns level zero; `0.0`
+always assigns `max_level`. `Config::default()` uses `1.0 - 1.0 / m`
+(`0.9375` when `m = 16`), matching the HNSW paper and hnswlib so
+`P(level >= L) = m^{-L}`. Use `Config::level_mult_for_m(m)` when changing `m`
+and keeping that distribution. Existing `.hnsw` snapshots that stored `0.5`
+still load.
 
 ## Persistence
 
@@ -181,8 +185,9 @@ public Rust API, and reports sequential build throughput, query latency, query
 throughput, and recall@k against an exact inner-product scan.
 
 The default comparison uses 10,000 384-dimensional vectors, 100 queries,
-`k=10`, `M=16`, `ef_construction=200`, and `ef_search=100`. The three indexes
-use equivalent inner-product rankings: this crate's normalized cosine
+`k=10`, `M=16`, `ef_construction=200`, `ef_search=100`, and the paper /
+hnswlib level multiplier `1 - 1/M` (`Config::level_mult_for_m`). The three
+indexes use equivalent inner-product rankings: this crate's normalized cosine
 distance, a non-negative `max(0, 1 - dot)` custom distance through `hnsw_rs`'s
 public distance interface, and USearch's `MetricKind::IP` with `f32` storage.
 The custom upstream distance avoids `hnsw_rs::DistDot` panicking when normal
