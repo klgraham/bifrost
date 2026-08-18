@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `Graph::node_count` no longer `expect`s if the `u32` insertion cap is
+  bypassed. `insert_node` returns `Error::CapacityExceeded` at that length,
+  and the public count saturates at `u32::MAX`.
 - CI clippy-checks and unit-tests the competitor crate (no FiQA download) and
   runs library tests on Windows as well as Ubuntu and macOS. The competitor
   `Config` init uses `..Config::default()` so new fields such as
@@ -127,6 +130,9 @@
   and search.
 - `HnswIndex::graph` is a shared reference; `edges`, `node`, `layer_count`,
   `has_edge`, and `degree` inspect adjacency without allowing replacement.
+- `Graph::node_count` does not panic if the node list exceeds `u32::MAX`;
+  the value saturates. `insert_node` rejects that length with
+  `Error::CapacityExceeded`.
 - `HnswIndex::insert` is transactional: failure after the node is appended
   rolls back storage, adjacency (including prune), and the external-ID map.
 - `HnswIndex::build` assigns dense IDs starting at zero. It is a convenience

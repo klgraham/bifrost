@@ -212,10 +212,10 @@ impl HnswIndex {
             return Err(Error::DuplicateExternalId(id));
         }
 
-        if self.graph.node_data.len() >= u32::MAX as usize {
+        if Graph::node_len_at_u32_cap(self.graph.node_data.len()) {
             return Err(Error::CapacityExceeded("node count"));
         }
-        let node_index = self.graph.node_data.len() as u32;
+        let node_index = Graph::node_index_from_len(self.graph.node_data.len());
         let vector_offset = u32::try_from(self.vector_data.len())
             .map_err(|_| Error::CapacityExceeded("vector data"))?;
         self.vector_data
