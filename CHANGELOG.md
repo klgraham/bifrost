@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Public `dot`, `cosine_distance`, and `cosine_similarity` return
+  `Error::DimensionMismatch` instead of asserting equal lengths. Inner
+  kernels `debug_assert` after insert/search `check_dimension`.
 - `debug_assert` that insert and search vectors are finite and near-unit
   (`||v||` within `0.01` of `1`). `Config::check_vectors` (default `false`)
   makes `HnswIndex` insert/search and `LoadedHnsw` search return
@@ -70,7 +73,9 @@
 ## API behavior
 
 - Dimension mismatches and invalid configuration return typed Rust errors
-  rather than relying on debug assertions.
+  rather than relying on debug assertions. Public `vector::dot`,
+  `cosine_distance`, and `cosine_similarity` return
+  `Error::DimensionMismatch` when the arguments have different lengths.
 - Insert and search `debug_assert` finite, near-unit vectors. With
   `Config::check_vectors` (or `set_check_vectors`), those failures are
   `Error::InvalidVector`. The flag is not persisted in `.hnsw` snapshots.
