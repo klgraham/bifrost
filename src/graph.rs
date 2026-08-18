@@ -29,6 +29,13 @@ pub struct Graph {
     fail_add_edge_from: Option<NodeIndex>,
 }
 
+#[cfg(test)]
+impl Graph {
+    pub(crate) fn fail_next_add_edge_from(&mut self, source: NodeIndex) {
+        self.fail_add_edge_from = Some(source);
+    }
+}
+
 impl Graph {
     #[must_use]
     pub fn new() -> Self {

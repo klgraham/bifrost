@@ -1168,7 +1168,7 @@ mod tests {
         index.insert(1, &[0.0, 1.0]).unwrap();
         let before = snapshot(&index);
 
-        index.graph.fail_add_edge_from = Some(0);
+        index.graph.fail_next_add_edge_from(0);
         assert!(matches!(
             index.insert(2, &[0.7, 0.7]),
             Err(Error::InvalidNode(0))
