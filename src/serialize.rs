@@ -6,6 +6,7 @@
 //! custom implementations for those rules while risking byte incompatibility.
 
 use std::{
+    cell::RefCell,
     fs::{self, File, OpenOptions},
     io::{BufWriter, Write},
     ops::Range,
@@ -16,7 +17,12 @@ use std::{
 use crc32fast::Hasher;
 use memmap2::{Mmap, MmapOptions};
 
-use crate::{Config, Error, HnswIndex, NodeIndex, NodeMeta, Result};
+use crate::{
+    Config, Error, HnswIndex, NodeIndex, NodeMeta, Result, SearchHit,
+    index::hits_from_candidates,
+    layer::{SearchGraph, SearchVectors, search_knn},
+    vector::cosine_distance,
+};
 
 pub const MAGIC: u32 = 0x484e_5357;
 pub const VERSION: u16 = 3;
@@ -73,6 +79,10 @@ struct Sections {
 }
 
 /// Validated, memory-mapped HNSW file.
+///
+/// The mapping is query-only: [`LoadedHnsw::search`] walks the on-disk graph
+/// and vectors in place. Construction and further inserts stay on
+/// [`HnswIndex`].
 pub struct LoadedHnsw {
     mmap: Mmap,
     header: Header,
@@ -119,6 +129,66 @@ impl LoadedHnsw {
         Some(VectorView {
             bytes: self.mmap.get(start..end)?,
         })
+    }
+
+    /// Memory-maps and validates a `.hnsw` snapshot for query-only search.
+    ///
+    /// This is the primary constructor; [`load_file`] is the same function.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        load_file(path)
+    }
+
+    /// Searches the mapped snapshot for at most `k` nearest neighbors.
+    ///
+    /// Uses the stored `ef_search`, expanded to `max(ef_search, k)` so a
+    /// request larger than the saved candidate width still returns up to `k`
+    /// hits. Call [`LoadedHnsw::search_with_ef`] to override the stored width.
+    pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
+        self.search_with_ef(query, k, self.header.ef_search)
+    }
+
+    /// Searches using an explicit layer-0 candidate width.
+    ///
+    /// The search width is `max(ef, k)`. The graph and vectors stay mapped;
+    /// nothing is copied into an owned [`HnswIndex`].
+    pub fn search_with_ef(&self, query: &[f32], k: usize, ef: u16) -> Result<Vec<SearchHit>> {
+        self.check_dimension(query)?;
+        let store = MappedVectors {
+            loaded: self,
+            scratch: RefCell::new(vec![0.0; usize::from(self.header.dim)]),
+        };
+        let entry_point = (self.header.node_count > 0).then_some(self.header.entry_point);
+        let candidates = search_knn(
+            self,
+            &store,
+            query,
+            k,
+            ef,
+            entry_point,
+            self.header.entry_level,
+        )?;
+        Ok(hits_from_candidates(self, candidates))
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.header.node_count as usize
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.header.node_count == 0
+    }
+
+    fn check_dimension(&self, vector: &[f32]) -> Result<()> {
+        let expected = usize::from(self.header.dim);
+        if vector.len() != expected {
+            return Err(Error::DimensionMismatch {
+                expected,
+                actual: vector.len(),
+            });
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -181,6 +251,20 @@ impl VectorView<'_> {
             ))
         })
     }
+
+    /// Copies decoded little-endian `f32` values into `dest`.
+    ///
+    /// Returns `None` if `dest` does not have the same length as this view.
+    #[must_use]
+    pub fn copy_into(&self, dest: &mut [f32]) -> Option<()> {
+        if dest.len() != self.len() {
+            return None;
+        }
+        for (slot, value) in dest.iter_mut().zip(self.iter()) {
+            *slot = value;
+        }
+        Some(())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -188,7 +272,7 @@ pub struct EdgeView<'a> {
     bytes: &'a [u8],
 }
 
-impl EdgeView<'_> {
+impl<'a> EdgeView<'a> {
     #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len() / 4
@@ -207,13 +291,46 @@ impl EdgeView<'_> {
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = NodeIndex> + '_ {
+    pub fn iter(self) -> impl ExactSizeIterator<Item = NodeIndex> + 'a {
         self.bytes
             .chunks_exact(4)
             .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four-byte edge element")))
     }
 }
 
+struct MappedVectors<'a> {
+    loaded: &'a LoadedHnsw,
+    scratch: RefCell<Vec<f32>>,
+}
+
+impl SearchGraph for LoadedHnsw {
+    fn node_count(&self) -> NodeIndex {
+        self.header.node_count
+    }
+
+    fn node(&self, node_index: NodeIndex) -> Option<NodeMeta> {
+        LoadedHnsw::node(self, node_index)
+    }
+
+    fn neighbors(&self, level: u8, node_index: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.edges(level, node_index).iter()
+    }
+}
+
+impl SearchVectors for MappedVectors<'_> {
+    fn distance(&self, node_index: NodeIndex, query: &[f32]) -> Result<f32> {
+        let Some(view) = self.loaded.vector(node_index) else {
+            return Err(Error::InvalidNode(node_index));
+        };
+        let mut scratch = self.scratch.borrow_mut();
+        view.copy_into(&mut scratch).ok_or(Error::InvalidFile(
+            "mapped vector length does not match dim",
+        ))?;
+        Ok(cosine_distance(&scratch, query))
+    }
+}
+
+/// Writes a validated `.hnsw` snapshot for later query-only mapping.
 pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     index.config.validate()?;
     let (edge_offsets, edge_lengths, edge_data) = build_edge_tables(index)?;
@@ -254,6 +371,10 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
+/// Memory-maps a `.hnsw` file and validates magic, version, CRC, and layout.
+///
+/// Equivalent to [`LoadedHnsw::open`]. The mapping can be searched in place.
+/// Valid v2 files are rewritten to v3 before the mapping is returned.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
     let path = path.as_ref();
     loop {
@@ -477,6 +598,16 @@ fn validate(data: &[u8], header: &Header, sections: &Sections) -> Result<()> {
         }
     }
 
+    if header.node_count > 0 {
+        let start = sections.nodes.start + header.entry_point as usize * NODE_META_SIZE;
+        let entry = read_node(&data[start..start + NODE_META_SIZE]);
+        if entry.level < header.entry_level {
+            return Err(Error::InvalidFile(
+                "entry point does not exist at entry_level",
+            ));
+        }
+    }
+
     let edge_count = sections.edges.len() / 4;
     for level in 0..layer_count {
         for node_index in 0..node_count {
@@ -666,6 +797,144 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
+    fn four_node_index(ef_search: u16) -> HnswIndex {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            ef_search,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
+            .iter()
+            .enumerate()
+        {
+            index.insert(id as u32, vector).unwrap();
+        }
+        index
+    }
+
+    #[test]
+    fn save_load_search_matches_live_index() {
+        let path = temporary_file("search-round-trip");
+        let index = fixture_index();
+        let query = [0.9_f32, 0.1];
+        let live = index.search(&query, 3).unwrap();
+        index.save(&path).unwrap();
+
+        let loaded = HnswIndex::load(&path).unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded.search(&query, 3).unwrap(), live);
+        assert_eq!(loaded.search(&query, 1).unwrap(), live[..1]);
+        assert!(loaded.search(&query, 0).unwrap().is_empty());
+        assert!(matches!(
+            loaded.search(&[1.0], 1),
+            Err(Error::DimensionMismatch {
+                expected: 2,
+                actual: 1
+            })
+        ));
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn loaded_search_returns_k_when_larger_than_ef_search() {
+        let path = temporary_file("search-k-gt-ef");
+        let index = four_node_index(2);
+        let live = index.search(&[1.0, 0.0], 4).unwrap();
+        assert_eq!(live.len(), 4);
+        index.save(&path).unwrap();
+
+        let loaded = LoadedHnsw::open(&path).unwrap();
+        assert_eq!(loaded.search(&[1.0, 0.0], 4).unwrap().len(), 4);
+        assert_eq!(loaded.search(&[1.0, 0.0], 4).unwrap(), live);
+        assert_eq!(loaded.search_with_ef(&[1.0, 0.0], 4, 2).unwrap(), live);
+        assert_eq!(loaded.search_with_ef(&[1.0, 0.0], 1, 2).unwrap().len(), 1);
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn empty_snapshot_search_is_empty() {
+        let path = temporary_file("empty-search");
+        let index = HnswIndex::new(Config {
+            dim: 2,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        index.save(&path).unwrap();
+        let loaded = load_file(&path).unwrap();
+        assert!(loaded.is_empty());
+        assert!(loaded.search(&[1.0, 0.0], 5).unwrap().is_empty());
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn migrated_v2_snapshot_is_searchable() {
+        let path = temporary_file("migrated-search");
+        let index = fixture_index();
+        let expected = index.search(&[0.0, 1.0], 2).unwrap();
+        save_file(&index, &path).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[4..6].copy_from_slice(&MIGRATABLE_VERSION.to_le_bytes());
+        bytes[CRC_OFFSET..CRC_OFFSET + 24].fill(0);
+        fs::write(&path, bytes).unwrap();
+        let loaded = load_file(&path).unwrap();
+        assert_eq!(loaded.header().version, VERSION);
+        assert_eq!(loaded.search(&[0.0, 1.0], 2).unwrap(), expected);
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn save_load_search_matches_live_ranking() {
+        let path = temporary_file("search-ranking");
+        let mut index = HnswIndex::new(Config {
+            dim: 4,
+            rng_seed: Some(1234),
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, vector) in [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [-1.0, 0.0, 0.0, 0.0],
+        ]
+        .iter()
+        .enumerate()
+        {
+            index.insert(id as u32, vector).unwrap();
+        }
+        let query = [1.0, 0.0, 0.0, 0.0];
+        let live = index.search(&query, 4).unwrap();
+        index.save(&path).unwrap();
+        let loaded = load_file(&path).unwrap();
+        assert_eq!(loaded.search(&query, 4).unwrap(), live);
+        assert_eq!(live.first().unwrap().id, 0);
+        assert_eq!(live.last().unwrap().id, 3);
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn vector_view_copy_into_rejects_length_mismatch() {
+        let path = temporary_file("copy-into");
+        save_file(&fixture_index(), &path).unwrap();
+        let loaded = load_file(&path).unwrap();
+        let view = loaded.vector(0).unwrap();
+        let mut dest = [0.0_f32; 3];
+        assert!(view.copy_into(&mut dest).is_none());
+        let mut dest = [0.0_f32; 2];
+        assert_eq!(view.copy_into(&mut dest), Some(()));
+        assert_eq!(dest, [1.0, 0.0]);
+        drop(loaded);
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn corrupted_data_fails_crc() {
         let path = temporary_file("crc");
@@ -734,6 +1003,27 @@ mod tests {
             Err(Error::InvalidFile(_))
         ));
         fs::remove_file(truncated_path).unwrap();
+    }
+
+    #[test]
+    fn entry_point_below_entry_level_is_rejected() {
+        let path = temporary_file("low-entry");
+        save_file(&fixture_index(), &path).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        let header = decode_header(&bytes[..HEADER_SIZE]);
+        assert!(header.entry_level > 0);
+        let nodes = HEADER_SIZE + header.node_count as usize * usize::from(header.dim) * 4;
+        let entry = nodes + header.entry_point as usize * NODE_META_SIZE;
+        bytes[entry + 4] = header.entry_level.saturating_sub(1);
+        refresh_crc(&mut bytes);
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            load_file(&path),
+            Err(Error::InvalidFile(
+                "entry point does not exist at entry_level"
+            ))
+        ));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

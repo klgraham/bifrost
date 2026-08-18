@@ -3,9 +3,10 @@ use std::{collections::HashMap, path::Path};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
-    Config, Error, ExternalId, Graph, NodeIndex, Result,
-    layer::{Candidate, VectorStore, search_layer, search_layer_excluding},
-    vector::cosine_distance,
+    Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, Result,
+    layer::{
+        Candidate, SearchGraph, VectorStore, search_knn, search_layer, search_layer_excluding,
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -15,6 +16,9 @@ pub struct SearchHit {
 }
 
 /// Mutable HNSW index supporting incremental insertion and nearest-neighbor search.
+///
+/// Persist a built index with [`HnswIndex::save`] and later reopen it for
+/// query-only search with [`HnswIndex::load`].
 #[derive(Debug)]
 pub struct HnswIndex {
     pub config: Config,
@@ -25,6 +29,30 @@ pub struct HnswIndex {
     pub(crate) entry_point: Option<NodeIndex>,
     pub(crate) entry_level: u8,
     rng: StdRng,
+}
+
+pub(crate) fn hits_from_candidates<G: SearchGraph>(
+    graph: &G,
+    candidates: Vec<Candidate>,
+) -> Vec<SearchHit> {
+    let mut hits = candidates
+        .into_iter()
+        .map(|candidate| {
+            let node = graph
+                .node(candidate.node_index)
+                .expect("search candidates refer to existing nodes");
+            SearchHit {
+                id: node.external_id,
+                distance: candidate.distance,
+            }
+        })
+        .collect::<Vec<_>>();
+    hits.sort_by(|left, right| {
+        left.distance
+            .total_cmp(&right.distance)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    hits
 }
 
 impl HnswIndex {
@@ -112,51 +140,23 @@ impl HnswIndex {
     }
 
     /// Searches for at most `k` nearest neighbors to a normalized query vector.
+    ///
+    /// Layer 0 uses a candidate width of `max(ef_search, k)`, matching HNSW /
+    /// hnswlib, so asking for more hits than [`Config::ef_search`] still
+    /// returns up to `k` results when the graph contains them.
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchHit>> {
         self.check_dimension(query)?;
-        if k == 0 {
-            return Ok(Vec::new());
-        }
-        let Some(mut entry_point) = self.entry_point else {
-            return Ok(Vec::new());
-        };
         let store = self.vector_store();
-
-        let mut level = self.entry_level;
-        while level > 0 {
-            entry_point = search_layer(&self.graph, &store, entry_point, level, query, 1)?.nearest;
-            level -= 1;
-        }
-
-        let result = search_layer(
+        let candidates = search_knn(
             &self.graph,
             &store,
-            entry_point,
-            0,
             query,
-            u32::from(self.config.ef_search),
+            k,
+            self.config.ef_search,
+            self.entry_point,
+            self.entry_level,
         )?;
-        let mut hits = result
-            .candidates
-            .into_iter()
-            .take(k)
-            .map(|candidate| {
-                let node = self
-                    .graph
-                    .node(candidate.node_index)
-                    .expect("search candidates refer to existing nodes");
-                SearchHit {
-                    id: node.external_id,
-                    distance: cosine_distance(store.get(candidate.node_index), query),
-                }
-            })
-            .collect::<Vec<_>>();
-        hits.sort_by(|left, right| {
-            left.distance
-                .total_cmp(&right.distance)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        Ok(hits)
+        Ok(hits_from_candidates(&self.graph, candidates))
     }
 
     /// Inserts a batch and assigns dense external IDs starting at zero.
@@ -168,8 +168,19 @@ impl HnswIndex {
         Ok(())
     }
 
+    /// Writes a validated `.hnsw` snapshot that can be searched later without
+    /// re-inserting vectors.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         crate::serialize::save_file(self, path)
+    }
+
+    /// Memory-maps a previously saved `.hnsw` snapshot for query-only search.
+    ///
+    /// Prefer [`LoadedHnsw::open`] or [`crate::load_file`]; this is the same
+    /// mapping constructor and does **not** rebuild a mutable [`HnswIndex`].
+    /// Further inserts still require a live builder.
+    pub fn load(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
+        LoadedHnsw::open(path)
     }
 
     #[must_use]
@@ -282,6 +293,7 @@ fn select_entry_point_for_level(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vector::cosine_distance;
 
     fn config(dim: u16) -> Config {
         Config {
@@ -404,6 +416,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn search_returns_k_when_larger_than_ef_search() {
+        let mut index = HnswIndex::new(Config {
+            dim: 2,
+            ef_search: 2,
+            rng_seed: Some(1),
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
+            .iter()
+            .enumerate()
+        {
+            index.insert(id as u32, vector).unwrap();
+        }
+        let hits = index.search(&[1.0, 0.0], 4).unwrap();
+        assert_eq!(hits.len(), 4);
     }
 
     #[test]

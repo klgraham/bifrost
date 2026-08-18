@@ -62,6 +62,22 @@ fn loads_v3_fixture() {
 }
 
 #[test]
+fn loaded_fixture_search_matches_live_index() {
+    let path = temporary_file("search-v3");
+    fs::write(&path, v3_fixture()).unwrap();
+    let loaded = load_file(&path).unwrap();
+    let live = fixture_index();
+    let query = [0.9_f32, 0.1];
+    assert_eq!(
+        loaded.search(&query, 3).unwrap(),
+        live.search(&query, 3).unwrap()
+    );
+    assert_eq!(loaded.search(&[0.0, 1.0], 1).unwrap()[0].id, 200);
+    drop(loaded);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn writer_matches_v3_fixture() {
     let path = temporary_file("write-v3");
     fixture_index().save(&path).unwrap();

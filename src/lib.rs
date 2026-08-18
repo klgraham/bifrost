@@ -1,7 +1,9 @@
 //! A compact Hierarchical Navigable Small World (HNSW) vector index.
 //!
 //! It supports incremental insertion, approximate nearest-neighbor search with
-//! cosine distance, and mmap-friendly `.hnsw` v3 persistence.
+//! cosine distance, and mmap-friendly `.hnsw` v3 persistence. Saved snapshots
+//! can be mapped with [`load_file`] / [`LoadedHnsw::open`] and searched in place
+//! through [`LoadedHnsw::search`].
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 

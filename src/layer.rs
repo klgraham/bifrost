@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::{Error, Graph, NodeIndex, Result, vector::cosine_distance};
+use crate::{Error, Graph, NodeIndex, NodeMeta, Result, vector::cosine_distance};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Candidate {
@@ -12,6 +12,20 @@ pub(crate) struct Candidate {
 pub(crate) struct SearchResult {
     pub nearest: NodeIndex,
     pub candidates: Vec<Candidate>,
+}
+
+/// Graph view used by layer search. Implemented by the mutable construction
+/// graph and by the memory-mapped snapshot.
+pub(crate) trait SearchGraph {
+    fn node_count(&self) -> NodeIndex;
+    fn node(&self, node_index: NodeIndex) -> Option<NodeMeta>;
+    fn neighbors(&self, level: u8, node_index: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_;
+}
+
+/// Vector view used by layer search. Implemented by the owned store and by
+/// mmap-backed decoded vectors.
+pub(crate) trait SearchVectors {
+    fn distance(&self, node_index: NodeIndex, query: &[f32]) -> Result<f32>;
 }
 
 pub(crate) struct VectorStore<'a> {
@@ -27,14 +41,38 @@ impl VectorStore<'_> {
     }
 }
 
+impl SearchGraph for Graph {
+    fn node_count(&self) -> NodeIndex {
+        Graph::node_count(self)
+    }
+
+    fn node(&self, node_index: NodeIndex) -> Option<NodeMeta> {
+        Graph::node(self, node_index)
+    }
+
+    fn neighbors(&self, level: u8, node_index: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        Graph::edges(self, level, node_index).iter().copied()
+    }
+}
+
+impl SearchVectors for VectorStore<'_> {
+    fn distance(&self, node_index: NodeIndex, query: &[f32]) -> Result<f32> {
+        Ok(cosine_distance(self.get(node_index), query))
+    }
+}
+
 fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
     left.distance
         .total_cmp(&right.distance)
         .then_with(|| left.node_index.cmp(&right.node_index))
 }
 
-fn distance_to_node(store: &VectorStore<'_>, node_index: NodeIndex, query: &[f32]) -> f32 {
-    cosine_distance(store.get(node_index), query)
+fn distance_to_node<S: SearchVectors>(
+    store: &S,
+    node_index: NodeIndex,
+    query: &[f32],
+) -> Result<f32> {
+    store.distance(node_index, query)
 }
 
 fn insert_bounded(results: &mut Vec<Candidate>, candidate: Candidate, ef: usize) {
@@ -53,26 +91,34 @@ fn insert_bounded(results: &mut Vec<Candidate>, candidate: Candidate, ef: usize)
     results.truncate(ef);
 }
 
-pub(crate) fn search_layer(
-    graph: &Graph,
-    store: &VectorStore<'_>,
+pub(crate) fn search_layer<G, S>(
+    graph: &G,
+    store: &S,
     entry_point: NodeIndex,
     level: u8,
     query: &[f32],
     ef: u32,
-) -> Result<SearchResult> {
+) -> Result<SearchResult>
+where
+    G: SearchGraph,
+    S: SearchVectors,
+{
     search_layer_excluding(graph, store, entry_point, level, query, ef, None)
 }
 
-pub(crate) fn search_layer_excluding(
-    graph: &Graph,
-    store: &VectorStore<'_>,
+pub(crate) fn search_layer_excluding<G, S>(
+    graph: &G,
+    store: &S,
     entry_point: NodeIndex,
     level: u8,
     query: &[f32],
     ef: u32,
     excluded: Option<NodeIndex>,
-) -> Result<SearchResult> {
+) -> Result<SearchResult>
+where
+    G: SearchGraph,
+    S: SearchVectors,
+{
     let entry_meta = graph
         .node(entry_point)
         .ok_or(Error::InvalidNode(entry_point))?;
@@ -84,12 +130,15 @@ pub(crate) fn search_layer_excluding(
     let mut visited = vec![false; graph.node_count() as usize];
     let mut frontier = Vec::new();
     let mut results = Vec::new();
-    visited[entry_point as usize] = true;
+    let Some(entry_slot) = visited.get_mut(entry_point as usize) else {
+        return Err(Error::InvalidNode(entry_point));
+    };
+    *entry_slot = true;
 
     if excluded != Some(entry_point) {
         let entry = Candidate {
             node_index: entry_point,
-            distance: distance_to_node(store, entry_point, query),
+            distance: distance_to_node(store, entry_point, query)?,
         };
         frontier.push(entry);
         insert_bounded(&mut results, entry, ef);
@@ -107,11 +156,14 @@ pub(crate) fn search_layer_excluding(
             break;
         }
 
-        for &neighbor in graph.edges(level, current.node_index) {
-            if visited[neighbor as usize] {
+        for neighbor in graph.neighbors(level, current.node_index) {
+            let Some(seen) = visited.get_mut(neighbor as usize) else {
+                continue;
+            };
+            if *seen {
                 continue;
             }
-            visited[neighbor as usize] = true;
+            *seen = true;
             if excluded == Some(neighbor) {
                 continue;
             }
@@ -121,9 +173,12 @@ pub(crate) fn search_layer_excluding(
             if meta.level < level {
                 continue;
             }
+            let Ok(distance) = distance_to_node(store, neighbor, query) else {
+                continue;
+            };
             let candidate = Candidate {
                 node_index: neighbor,
-                distance: distance_to_node(store, neighbor, query),
+                distance,
             };
             if results.len() < ef
                 || compare_candidates(
@@ -145,6 +200,41 @@ pub(crate) fn search_layer_excluding(
         nearest,
         candidates: results,
     })
+}
+
+/// Greedy multi-layer descent followed by a layer-0 candidate search.
+pub(crate) fn search_knn<G, S>(
+    graph: &G,
+    store: &S,
+    query: &[f32],
+    k: usize,
+    ef_search: u16,
+    entry_point: Option<NodeIndex>,
+    entry_level: u8,
+) -> Result<Vec<Candidate>>
+where
+    G: SearchGraph,
+    S: SearchVectors,
+{
+    if k == 0 {
+        return Ok(Vec::new());
+    }
+    let Some(mut entry_point) = entry_point else {
+        return Ok(Vec::new());
+    };
+
+    let mut level = entry_level;
+    while level > 0 {
+        entry_point = search_layer(graph, store, entry_point, level, query, 1)?.nearest;
+        level -= 1;
+    }
+
+    // HNSW / hnswlib expand the layer-0 candidate list to at least k so a
+    // caller asking for more neighbors than `ef_search` still receives them.
+    let requested = u32::try_from(k).unwrap_or(u32::MAX);
+    let ef = u32::from(ef_search).max(requested);
+    let result = search_layer(graph, store, entry_point, 0, query, ef)?;
+    Ok(result.candidates.into_iter().take(k).collect())
 }
 
 #[cfg(test)]
@@ -194,6 +284,60 @@ mod tests {
         let result = search_layer(&graph, &store, 0, 0, &[1.0], 1).unwrap();
         assert_eq!(result.nearest, 2);
         assert_eq!(result.candidates.len(), 1);
+    }
+
+    #[test]
+    fn out_of_range_neighbors_are_skipped() {
+        struct OversizedGraph(Graph);
+
+        impl SearchGraph for OversizedGraph {
+            fn node_count(&self) -> NodeIndex {
+                self.0.node_count()
+            }
+
+            fn node(&self, node_index: NodeIndex) -> Option<NodeMeta> {
+                self.0.node(node_index)
+            }
+
+            fn neighbors(
+                &self,
+                level: u8,
+                node_index: NodeIndex,
+            ) -> impl Iterator<Item = NodeIndex> + '_ {
+                self.0
+                    .edges(level, node_index)
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(u32::MAX))
+            }
+        }
+
+        let mut graph = graph_with_nodes(&[0, 0]);
+        graph.add_bidirectional_edge(0, 0, 1).unwrap();
+        let data = [1.0, 0.0];
+        let store = VectorStore {
+            data: &data,
+            offsets: &[0, 1],
+            dim: 1,
+        };
+        let result = search_layer(&OversizedGraph(graph), &store, 0, 0, &[1.0], 2).unwrap();
+        assert_eq!(result.candidates.len(), 2);
+    }
+
+    #[test]
+    fn search_knn_returns_k_when_larger_than_ef_search() {
+        let mut graph = graph_with_nodes(&[0, 0, 0, 0]);
+        graph.add_bidirectional_edge(0, 0, 1).unwrap();
+        graph.add_bidirectional_edge(0, 1, 2).unwrap();
+        graph.add_bidirectional_edge(0, 2, 3).unwrap();
+        let data = [1.0, 0.5, 0.0, -0.5];
+        let store = VectorStore {
+            data: &data,
+            offsets: &[0, 1, 2, 3],
+            dim: 1,
+        };
+        let candidates = search_knn(&graph, &store, &[1.0], 4, 2, Some(0), 0).unwrap();
+        assert_eq!(candidates.len(), 4);
     }
 
     #[test]

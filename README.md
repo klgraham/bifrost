@@ -43,8 +43,10 @@ assert_eq!(hits[0].id, 100);
 
 `insert` and `search` return a dimension error instead of panicking when a
 slice does not match `Config::dim`. Duplicate external IDs are rejected.
-Random levels come from the maintained `rand` crate. A configured seed is
-repeatable with the pinned dependency version.
+Search uses a layer-0 candidate width of `max(ef_search, k)`, so asking for
+more hits than `Config::ef_search` still returns up to `k` neighbors when the
+graph contains them. Random levels come from the maintained `rand` crate. A
+configured seed is repeatable with the pinned dependency version.
 
 ### Normalized-vector contract
 
@@ -82,14 +84,21 @@ assert_eq!(
     loaded.vector(0).unwrap().iter().collect::<Vec<_>>(),
     [1.0, 0.0]
 );
+let hits = loaded.search(&[1.0, 0.0], 1)?;
+assert_eq!(hits[0].id, 7);
 # std::fs::remove_file(path)?;
 # Ok(())
 # }
 ```
 
-Loaded files remain memory-mapped. `node`, `vector`, and `edges` expose checked
-views tied to the mapping's lifetime; values are decoded from explicit
-little-endian bytes rather than obtained through unaligned pointer casts.
+`LoadedHnsw::open` and `load_file` are the primary mapping constructors;
+`HnswIndex::load` is the same query-only mapping and does not rebuild a
+mutable index. Loaded files remain memory-mapped: `search` walks the on-disk
+graph and vectors without re-inserting them, using `max(ef_search, k)` as the
+candidate width. `search_with_ef` overrides the stored `ef_search`. `node`,
+`vector`, and `edges` expose checked views tied to the mapping's lifetime;
+values are decoded from explicit little-endian bytes rather than obtained
+through unaligned pointer casts.
 
 The v3 format contains:
 
