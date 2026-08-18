@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Write `.hnsw` snapshots through the same temp + `sync_all` + `rename` path
+  as v2→v3 migration, so a crash mid-save cannot truncate a previous good
+  file. Leftover `.{name}.tmp-{pid}-{nonce}` files do not block a later save.
+- Open mapped snapshots read-only and document that callers must not mutate
+  the file while `LoadedHnsw` lives. Keep a shared read mapping rather than
+  `map_copy`: `MAP_PRIVATE` still has unspecified visibility of later writes,
+  and this crate's own replace is a rename onto a new inode.
 - Make `insert` transactional after the node is appended: a failed link or
   reverse-link prune restores adjacency, drops the isolated node, and leaves
   the external ID free to retry. `add_bidirectional_edge` is atomic.
@@ -54,7 +61,10 @@
   rather than relying on debug assertions.
 - Search results are owned `Vec<SearchHit>` values.
 - Mmap accessors decode checked little-endian views rather than exposing typed
-  slices cast directly from file bytes.
+  slices cast directly from file bytes. The mapping is read-only; do not
+  mutate the file while `LoadedHnsw` lives.
+- `save_file` and v2→v3 migration replace the destination with temp +
+  `sync_all` + `rename`.
 - `LoadedHnsw::search` / `LoadedHnsw::open` query a saved snapshot without
   reconstructing a mutable index.
 - Search candidate width is `max(ef_search, k)` on `search` and

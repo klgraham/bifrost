@@ -83,6 +83,15 @@ struct Sections {
 /// The mapping is query-only: [`LoadedHnsw::search`] walks the on-disk graph
 /// and vectors in place. Construction and further inserts stay on
 /// [`HnswIndex`].
+///
+/// The snapshot is opened read-only. Do not truncate, overwrite in place, or
+/// otherwise mutate the mapped file (or its inode) while this value lives:
+/// a shared `[u8]` mapping is unsound if those bytes change. This crate's
+/// [`save_file`] and v2→v3 migration write a sibling temporary file and
+/// `rename` it over the destination, so an existing mapping stays attached
+/// to the previous inode. A shared read mapping is used instead of
+/// `map_copy` because `MAP_PRIVATE` still has unspecified visibility of
+/// later file writes, and the mmap-friendly path is meant to share pages.
 pub struct LoadedHnsw {
     mmap: Mmap,
     header: Header,
@@ -134,6 +143,8 @@ impl LoadedHnsw {
     /// Memory-maps and validates a `.hnsw` snapshot for query-only search.
     ///
     /// This is the primary constructor; [`load_file`] is the same function.
+    /// The file must not be mutated while the returned value lives; see the
+    /// type-level contract on [`LoadedHnsw`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         load_file(path)
     }
@@ -332,7 +343,14 @@ impl SearchVectors for MappedVectors<'_> {
 }
 
 /// Writes a validated `.hnsw` snapshot for later query-only mapping.
+///
+/// The snapshot is written to a same-directory temporary file named
+/// `.{name}.tmp-{pid}-{nonce}`, flushed with [`File::sync_all`], then
+/// atomically [`rename`](fs::rename)d over `path`. A crash during the write
+/// cannot replace a previous good file with a truncated one. This is the
+/// same replace path used by v2→v3 migration.
 pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
     let config = index.config();
     config.validate()?;
     let (edge_offsets, edge_lengths, edge_data) = build_edge_tables(index)?;
@@ -356,27 +374,28 @@ pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     };
     header.reserved[..4].copy_from_slice(&hasher.finalize().to_le_bytes());
 
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-    writer.write_all(&encode_header(&header))?;
-    for &value in &index.vector_data {
-        writer.write_all(&value.to_bits().to_le_bytes())?;
-    }
-    for &node in &index.graph().node_data {
-        writer.write_all(&encode_node(node))?;
-    }
-    write_u32_values(&mut writer, &edge_offsets)?;
-    write_u32_values(&mut writer, &edge_lengths)?;
-    write_u32_values(&mut writer, &edge_data)?;
-    writer.flush()?;
-    writer.get_ref().sync_all()?;
-    Ok(())
+    replace_file(path, |writer| {
+        writer.write_all(&encode_header(&header))?;
+        for &value in &index.vector_data {
+            writer.write_all(&value.to_bits().to_le_bytes())?;
+        }
+        for &node in &index.graph().node_data {
+            writer.write_all(&encode_node(node))?;
+        }
+        write_u32_values(writer, &edge_offsets)?;
+        write_u32_values(writer, &edge_lengths)?;
+        write_u32_values(writer, &edge_data)?;
+        Ok(())
+    })
 }
 
 /// Memory-maps a `.hnsw` file and validates magic, version, CRC, and layout.
 ///
 /// Equivalent to [`LoadedHnsw::open`]. The mapping can be searched in place.
 /// Valid v2 files are rewritten to v3 before the mapping is returned.
+///
+/// The file is opened read-only. Do not mutate it while the returned
+/// [`LoadedHnsw`] is alive; see that type for the mapping contract.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
     let path = path.as_ref();
     loop {
@@ -384,8 +403,11 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
         if file.metadata()?.len() < HEADER_SIZE as u64 {
             return Err(Error::InvalidFile("file is shorter than the header"));
         }
-        // SAFETY: the mapping is read-only, retained by LoadedHnsw for every
-        // exposed view's lifetime, and all ranges are validated before access.
+        // SAFETY: `file` is opened read-only, the mapping is a shared read
+        // view retained by LoadedHnsw for every exposed slice's lifetime, and
+        // all ranges are validated before access. Callers must not mutate the
+        // file while the mapping lives; this crate replaces snapshots with
+        // temp + rename so an existing mapping keeps its original inode.
         let mmap = unsafe { MmapOptions::new().map(&file)? };
         let header = decode_header(&mmap[..HEADER_SIZE]);
         if header.magic != MAGIC {
@@ -417,10 +439,7 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
                 validate(&mmap, &header, &sections)?;
                 let temporary = write_v3_migration(path, &mmap, header)?;
                 drop(mmap);
-                if let Err(error) = fs::rename(&temporary, path) {
-                    let _ = fs::remove_file(&temporary);
-                    return Err(error.into());
-                }
+                commit_temporary(temporary, path)?;
             }
             _ => unreachable!("version was checked before section parsing"),
         }
@@ -673,6 +692,20 @@ fn write_v3_migration(path: &Path, data: &[u8], mut header: Header) -> Result<Pa
     header.version = VERSION;
     header.reserved = [0; 24];
     header.reserved[..4].copy_from_slice(&crc32fast::hash(&data[HEADER_SIZE..]).to_le_bytes());
+    write_temporary(path, |writer| {
+        writer.write_all(&encode_header(&header))?;
+        writer.write_all(&data[HEADER_SIZE..])?;
+        Ok(())
+    })
+}
+
+/// Writes `write` to `.{name}.tmp-{pid}-{nonce}` next to `path`, then
+/// [`File::sync_all`]s. The destination is unchanged until
+/// [`commit_temporary`].
+fn write_temporary(
+    path: &Path,
+    write: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
+) -> Result<PathBuf> {
     let temporary = temporary_path(path);
     let file = OpenOptions::new()
         .write(true)
@@ -680,8 +713,7 @@ fn write_v3_migration(path: &Path, data: &[u8], mut header: Header) -> Result<Pa
         .open(&temporary)?;
     let write_result = (|| -> Result<()> {
         let mut writer = BufWriter::new(file);
-        writer.write_all(&encode_header(&header))?;
-        writer.write_all(&data[HEADER_SIZE..])?;
+        write(&mut writer)?;
         writer.flush()?;
         writer.get_ref().sync_all()?;
         Ok(())
@@ -693,6 +725,19 @@ fn write_v3_migration(path: &Path, data: &[u8], mut header: Header) -> Result<Pa
     Ok(temporary)
 }
 
+fn commit_temporary(temporary: PathBuf, path: &Path) -> Result<()> {
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn replace_file(path: &Path, write: impl FnOnce(&mut BufWriter<File>) -> Result<()>) -> Result<()> {
+    let temporary = write_temporary(path, write)?;
+    commit_temporary(temporary, path)
+}
+
 fn temporary_path(path: &Path) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -701,7 +746,7 @@ fn temporary_path(path: &Path) -> PathBuf {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("index.hnsw");
-    path.with_file_name(format!(".{name}.migrate-{}-{nonce}", std::process::id()))
+    path.with_file_name(format!(".{name}.tmp-{}-{nonce}", std::process::id()))
 }
 
 fn read_u16(bytes: &[u8]) -> u16 {
@@ -1133,5 +1178,116 @@ mod tests {
         fs::write(&level_path, bytes).unwrap();
         assert!(matches!(load_file(&level_path), Err(Error::InvalidFile(_))));
         fs::remove_file(level_path).unwrap();
+    }
+
+    fn sibling_temps(path: &Path) -> Vec<PathBuf> {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("index.hnsw");
+        let prefix = format!(".{name}.tmp-");
+        let directory = path.parent().unwrap_or(Path::new("."));
+        let mut temps = fs::read_dir(directory)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|candidate| {
+                candidate
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix))
+            })
+            .collect::<Vec<_>>();
+        temps.sort();
+        temps
+    }
+
+    #[test]
+    fn failed_temporary_write_leaves_destination_and_cleans_temp() {
+        let path = temporary_file("atomic-failed-write");
+        save_file(&fixture_index(), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+
+        let error = write_temporary(&path, |writer| {
+            writer.write_all(b"partial")?;
+            Err(Error::InvalidFile("injected write failure"))
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::InvalidFile("injected write failure")
+        ));
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(sibling_temps(&path).is_empty());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn destination_is_unchanged_until_rename() {
+        let path = temporary_file("atomic-until-rename");
+        save_file(&fixture_index(), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+
+        let temporary = write_temporary(&path, |writer| {
+            writer.write_all(b"not-yet-committed")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(
+            sibling_temps(&path).as_slice(),
+            std::slice::from_ref(&temporary)
+        );
+        assert_eq!(fs::read(&temporary).unwrap(), b"not-yet-committed");
+
+        commit_temporary(temporary, &path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"not-yet-committed");
+        assert!(sibling_temps(&path).is_empty());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leftover_temp_does_not_block_atomic_save() {
+        let path = temporary_file("atomic-leftover");
+        let first = fixture_index();
+        save_file(&first, &path).unwrap();
+        let leftover = path.with_file_name(format!(
+            ".{}.tmp-1-1",
+            path.file_name().and_then(|name| name.to_str()).unwrap()
+        ));
+        fs::write(&leftover, b"crashed mid-write").unwrap();
+
+        let mut replacement = HnswIndex::new(Config {
+            dim: 2,
+            rng_seed: Some(2),
+            ..Config::default()
+        })
+        .unwrap();
+        replacement.insert(1, &[0.0, 1.0]).unwrap();
+        save_file(&replacement, &path).unwrap();
+
+        let loaded = load_file(&path).unwrap();
+        assert_eq!(loaded.header().node_count, 1);
+        assert_eq!(loaded.node(0).unwrap().external_id, 1);
+        drop(loaded);
+        assert_eq!(
+            sibling_temps(&path).as_slice(),
+            std::slice::from_ref(&leftover)
+        );
+        assert_eq!(fs::read(&leftover).unwrap(), b"crashed mid-write");
+        fs::remove_file(leftover).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn successful_save_leaves_no_temporary_files() {
+        let path = temporary_file("atomic-no-leftover");
+        save_file(&fixture_index(), &path).unwrap();
+        save_file(&fixture_index(), &path).unwrap();
+        assert!(sibling_temps(&path).is_empty());
+        let loaded = load_file(&path).unwrap();
+        assert_eq!(loaded.header().node_count, 3);
+        drop(loaded);
+        fs::remove_file(path).unwrap();
     }
 }

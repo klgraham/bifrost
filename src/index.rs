@@ -310,6 +310,9 @@ impl HnswIndex {
 
     /// Writes a validated `.hnsw` snapshot that can be searched later without
     /// re-inserting vectors.
+    ///
+    /// The write uses a same-directory temporary file, `sync_all`, and
+    /// `rename`, so a crash mid-save cannot truncate a previous good file.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         crate::serialize::save_file(self, path)
     }
@@ -318,7 +321,8 @@ impl HnswIndex {
     ///
     /// Prefer [`LoadedHnsw::open`] or [`crate::load_file`]; this is the same
     /// mapping constructor and does **not** rebuild a mutable [`HnswIndex`].
-    /// Further inserts still require a live builder.
+    /// Further inserts still require a live builder. Do not mutate the file
+    /// while the returned mapping lives.
     pub fn load(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
         LoadedHnsw::open(path)
     }
