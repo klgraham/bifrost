@@ -104,6 +104,8 @@ fn dot_scalar(a: &[f32], b: &[f32]) -> f32 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+// Init/arithmetic stdarch calls are `unsafe fn` on rustc 1.85 and safe later.
+#[allow(unused_unsafe)]
 unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::{
         _mm256_add_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_setzero_ps, _mm256_storeu_ps,
@@ -137,6 +139,8 @@ unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 {
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+// Init/arithmetic stdarch calls are `unsafe fn` on rustc 1.85 and safe later.
+#[allow(unused_unsafe)]
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
