@@ -8,7 +8,7 @@ it can find. Use it when you want ANN inside a Rust process: incremental insert,
 cosine-distance search, and memory-mapped `.hnsw` snapshots. There is no server,
 CLI, or network protocol.
 
-The product is Bifrost. The algorithm is Hierarchical Navigable Small World,
+The algorithm is Hierarchical Navigable Small World,
 HNSW. Call `HnswIndex`. Tune `m`, `ef_construction`, and `ef_search`. Save
 `.hnsw` files that still carry the `HNSW` magic. Those names are the algorithm,
 not a second product name.
