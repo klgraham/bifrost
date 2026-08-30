@@ -37,7 +37,7 @@ export BIFROST_VERIFY_RUN_ID="${BIFROST_VERIFY_RUN_ID:-$(date +%Y%m%dT%H%M%S)-$$
 
 Ready when the helper exits 0 and stdout contains both:
 
-- `ok launch crate=bifrost@0.2.0`
+- `ok launch crate=bifrost-index@0.2.0`
 - `Finished \`test\` profile`
 
 Teardown is **Cleanup**, not a daemon kill. Cargo/rustc started by launch
@@ -59,7 +59,8 @@ Require all of:
 
 - `cargo` and `rustc` on `PATH`; `rustc` reports a version `>= 1.85.0`
   (`Cargo.toml` `rust-version = "1.85"`, edition 2024).
-- Manifest package `name = "bifrost"`, `version = "0.2.0"`, `publish = false`.
+- Manifest package `name = "bifrost-index"`, `version = "0.2.0"`,
+  `[lib] name = "bifrost"` so rustc still resolves `use bifrost::...`.
 - `tests/interoperability.rs` and `tests/fixtures/v3.hex` exist.
 - Decoded `v3.hex` is exactly 220 bytes with SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`
