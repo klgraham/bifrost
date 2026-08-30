@@ -4,7 +4,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use hnsw_rs::{Config, Error, HnswIndex, LoadedHnsw};
+use bifrost::{Config, Error, HnswIndex, LoadedHnsw};
 
 fn temporary_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(

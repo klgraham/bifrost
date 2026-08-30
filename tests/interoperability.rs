@@ -4,7 +4,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use hnsw_rs::{Config, HnswIndex, VERSION, load_file};
+use bifrost::{Config, HnswIndex, VERSION, load_file};
 
 fn decode_hex(input: &str) -> Vec<u8> {
     let compact = input.trim();

@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Project-local harness for verifying the hnsw-rs public Rust API via cargo test.
+# Project-local harness for verifying the Bifrost public Rust API via cargo test.
 # Invocation is documented in ../SKILL.md.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_ROOT="${HNSW_RS_ROOT:-$(cd "${SKILL_DIR}/../../.." && pwd)}"
+REPO_ROOT="${BIFROST_ROOT:-$(cd "${SKILL_DIR}/../../.." && pwd)}"
 MANIFEST="${REPO_ROOT}/Cargo.toml"
 FIXTURE_HEX="${REPO_ROOT}/tests/fixtures/v3.hex"
 ARTIFACTS_ROOT="${SKILL_DIR}/artifacts"
 EXPECTED_SHA="70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca"
 EXPECTED_BYTES="220"
-EXPECTED_NAME="hnsw-rs"
+EXPECTED_NAME="bifrost"
 EXPECTED_VERSION="0.2.0"
 EXPECTED_RUST_VERSION="1.85"
 
 usage() {
   cat <<'USAGE'
-verify-hnsw-rs.sh <command> [args]
+verify-bifrost.sh <command> [args]
 
 Commands:
   doctor                      Read-only toolchain, crate, and v3 fixture check
@@ -32,12 +32,12 @@ Features:
   batch-build
 
 Environment:
-  HNSW_RS_ROOT         Override repo root
-  HNSW_VERIFY_RUN_ID   Default run id when --run-id is omitted
-  HNSW_VERIFY_SCRATCH  Override scratch directory
+  BIFROST_ROOT            Override repo root
+  BIFROST_VERIFY_RUN_ID   Default run id when --run-id is omitted
+  BIFROST_VERIFY_SCRATCH  Override scratch directory
 
 Evidence:
-  .cursor/skills/verify-hnsw-rs/artifacts/<run-id>/
+  .cursor/skills/verify-bifrost/artifacts/<run-id>/
 USAGE
 }
 
@@ -47,7 +47,7 @@ die() {
 }
 
 parse_run_id() {
-  RUN_ID="${HNSW_VERIFY_RUN_ID:-}"
+  RUN_ID="${BIFROST_VERIFY_RUN_ID:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --run-id)
@@ -72,12 +72,12 @@ parse_run_id() {
 
 scratch_dir_for() {
   local id="$1"
-  if [[ -n "${HNSW_VERIFY_SCRATCH:-}" ]]; then
-    printf '%s\n' "${HNSW_VERIFY_SCRATCH}"
+  if [[ -n "${BIFROST_VERIFY_SCRATCH:-}" ]]; then
+    printf '%s\n' "${BIFROST_VERIFY_SCRATCH}"
   else
     local base="${TMPDIR:-/tmp}"
     base="${base%/}"
-    printf '%s\n' "${base}/hnsw-rs-verify-${id}"
+    printf '%s\n' "${base}/bifrost-verify-${id}"
   fi
 }
 
@@ -87,7 +87,7 @@ run_dir_for() {
 
 require_repo() {
   [[ -f "${MANIFEST}" ]] || die "Cargo.toml not found at ${MANIFEST}"
-  grep -q '^name = "hnsw-rs"$' "${MANIFEST}" || die "${MANIFEST} is not crate hnsw-rs"
+  grep -q '^name = "bifrost"$' "${MANIFEST}" || die "${MANIFEST} is not crate bifrost"
 }
 
 cmd_doctor() {
@@ -312,7 +312,7 @@ json.dump(
         "rustc": rustc,
         "cargo": cargo,
         "captured_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "harness": "verify-hnsw-rs.sh",
+        "harness": "verify-bifrost.sh",
     },
     open(path, "w"),
     indent=2,

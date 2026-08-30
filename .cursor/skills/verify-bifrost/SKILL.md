@@ -1,18 +1,18 @@
 ---
-name: verify-hnsw-rs
+name: verify-bifrost
 description: >-
-  Verify hnsw-rs, a compact Rust HNSW library, through its public cargo/Rust
+  Verify Bifrost, a compact Rust HNSW library, through its public cargo/Rust
   API (HnswIndex insert, cosine-distance search, .hnsw v3 save/load). Use when
   proving library behavior after index, search, or persistence changes, or
   before treating `cargo test --all-features` as green.
 ---
 
-# Verify hnsw-rs
+# Verify Bifrost
 
-This skill drives **hnsw-rs 0.2.0**, a library crate (`hnsw_rs`) with no web UI,
+This skill drives **Bifrost 0.2.0**, a library crate (`bifrost`) with no web UI,
 CLI, or listening port. The user-facing surface is the public Rust API:
 `Config`, `HnswIndex::{new, insert, search, build, save, len}`, `SearchHit`,
-`load_file` / `LoadedHnsw`, and `hnsw_rs::vector::{dot, cosine_distance,
+`load_file` / `LoadedHnsw`, and `bifrost::vector::{dot, cosine_distance,
 cosine_similarity}`. Documented verification in `README.md` is
 `cargo test --all-features`. Deletion, updates, concurrent mutation, filtering,
 and quantization are **not** supported — do not invent those features.
@@ -20,7 +20,7 @@ Competitor benches under `benchmarks/competitors` and the OpenAI FiQA fixture
 are out of scope (network, paid, extra native deps).
 
 Repo root: `/Users/klogram/dev/klogram_labs/hnsw-rs`. Override with
-`HNSW_RS_ROOT` if the checkout moved. Read `features/README.md` before driving.
+`BIFROST_ROOT` if the checkout moved. Read `features/README.md` before driving.
 
 Maintenance: keep this map honest with `/maintain-verification-skill`.
 
@@ -31,13 +31,13 @@ into the crate's `target/` and prepare an isolated scratch directory for any
 `.hnsw` files (`std::env::temp_dir()` honors `TMPDIR`).
 
 ```bash
-export HNSW_VERIFY_RUN_ID="${HNSW_VERIFY_RUN_ID:-$(date +%Y%m%dT%H%M%S)-$$}"
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh launch --run-id "$HNSW_VERIFY_RUN_ID"
+export BIFROST_VERIFY_RUN_ID="${BIFROST_VERIFY_RUN_ID:-$(date +%Y%m%dT%H%M%S)-$$}"
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh launch --run-id "$BIFROST_VERIFY_RUN_ID"
 ```
 
 Ready when the helper exits 0 and stdout contains both:
 
-- `ok launch crate=hnsw-rs@0.2.0`
+- `ok launch crate=bifrost@0.2.0`
 - `Finished \`test\` profile`
 
 Teardown is **Cleanup**, not a daemon kill. Cargo/rustc started by launch
@@ -52,14 +52,14 @@ anything looks off.
 Read-only. Answers "is this checkout worth driving?"
 
 ```bash
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh doctor
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh doctor
 ```
 
 Require all of:
 
 - `cargo` and `rustc` on `PATH`; `rustc` reports a version `>= 1.85.0`
   (`Cargo.toml` `rust-version = "1.85"`, edition 2024).
-- Manifest package `name = "hnsw-rs"`, `version = "0.2.0"`, `publish = false`.
+- Manifest package `name = "bifrost"`, `version = "0.2.0"`, `publish = false`.
 - `tests/interoperability.rs` and `tests/fixtures/v3.hex` exist.
 - Decoded `v3.hex` is exactly 220 bytes with SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`
@@ -70,12 +70,12 @@ Stdout ends with a single `ok doctor ...` line. Non-zero exit means do not drive
 
 ## Drive
 
-Harness: `scripts/verify-hnsw-rs.sh` wrapping `cargo test --all-features`.
+Harness: `scripts/verify-bifrost.sh` wrapping `cargo test --all-features`.
 Prefer the helper so `TMPDIR`, evidence paths, and filters stay consistent.
 Drive from repo root after a successful doctor and launch for this `RUN_ID`.
 
 ```bash
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh drive <feature-id> --run-id "$HNSW_VERIFY_RUN_ID"
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh drive <feature-id> --run-id "$BIFROST_VERIFY_RUN_ID"
 ```
 
 Mapped feature IDs and the cargo filters they run (libtest substring after `--`):
@@ -90,7 +90,7 @@ Mapped feature IDs and the cargo filters they run (libtest substring after `--`)
 Public-API shape these tests exercise (do not replace with private graph setters):
 
 ```rust
-use hnsw_rs::{load_file, Config, HnswIndex};
+use bifrost::{load_file, Config, HnswIndex};
 
 let mut index = HnswIndex::new(Config {
     dim: 4,
@@ -110,7 +110,7 @@ enable `fiqa-prep`, do not run `cargo bench` or `benchmarks/competitors`.
 
 Proof artifacts live under the skill directory so cleanup cannot eat them:
 
-`/Users/klogram/dev/klogram_labs/hnsw-rs/.cursor/skills/verify-hnsw-rs/artifacts/<run-id>/`
+`/Users/klogram/dev/klogram_labs/hnsw-rs/.cursor/skills/verify-bifrost/artifacts/<run-id>/`
 
 Per drive, expect at least:
 
@@ -137,7 +137,7 @@ Proof standards:
 ## Cleanup
 
 ```bash
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh cleanup --run-id "$HNSW_VERIFY_RUN_ID"
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh cleanup --run-id "$BIFROST_VERIFY_RUN_ID"
 ```
 
 Removes the disposable scratch directory (`TMPDIR` / `.hnsw` files) for this
@@ -153,18 +153,18 @@ Run cleanup after failed iterations too so crashed writers do not leave
 
 ## Helpers
 
-`scripts/verify-hnsw-rs.sh` is executable. Invoke it from the repo root (or
-rely on `HNSW_RS_ROOT`):
+`scripts/verify-bifrost.sh` is executable. Invoke it from the repo root (or
+rely on `BIFROST_ROOT`):
 
 ```bash
-scripts/verify-hnsw-rs.sh          # from .cursor/skills/verify-hnsw-rs/
+scripts/verify-bifrost.sh          # from .cursor/skills/verify-bifrost/
 # or
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh doctor
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh launch --run-id "$HNSW_VERIFY_RUN_ID"
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh drive insert-and-search --run-id "$HNSW_VERIFY_RUN_ID"
-.cursor/skills/verify-hnsw-rs/scripts/verify-hnsw-rs.sh cleanup --run-id "$HNSW_VERIFY_RUN_ID"
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh doctor
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh launch --run-id "$BIFROST_VERIFY_RUN_ID"
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh drive insert-and-search --run-id "$BIFROST_VERIFY_RUN_ID"
+.cursor/skills/verify-bifrost/scripts/verify-bifrost.sh cleanup --run-id "$BIFROST_VERIFY_RUN_ID"
 ```
 
-`--run-id` may be omitted when `HNSW_VERIFY_RUN_ID` is already exported.
+`--run-id` may be omitted when `BIFROST_VERIFY_RUN_ID` is already exported.
 The script refuses to run if `Cargo.toml` is not this crate. It always sets
 `TMPDIR` to the per-run scratch dir before invoking cargo.

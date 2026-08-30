@@ -16,22 +16,22 @@ byte-for-byte stable.
 ## How to get to it (user POV)
 
 - After inserts, call `index.save(&path)?` with `path` in a temp directory.
-- Call `hnsw_rs::load_file(&path)?` and read `loaded.header()`, `loaded.node(i)`,
+- Call `bifrost::load_file(&path)?` and read `loaded.header()`, `loaded.node(i)`,
   `loaded.vector(i)`.
 - Follow the README persistence example (`dim: 2`, id `7`, vector `[1.0, 0.0]`).
 - The checked-in golden is `tests/fixtures/v3.hex` (decoded SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`).
 
-## Driving it with verify-hnsw-rs
+## Driving it with verify-bifrost
 
 Preconditions:
 
-- `scripts/verify-hnsw-rs.sh doctor` exited 0, including the 220-byte fixture SHA.
-- `scripts/verify-hnsw-rs.sh launch --run-id $RUN_ID` compiled tests.
+- `scripts/verify-bifrost.sh doctor` exited 0, including the 220-byte fixture SHA.
+- `scripts/verify-bifrost.sh launch --run-id $RUN_ID` compiled tests.
 - Scratch `TMPDIR` is the launch scratch dir so `.hnsw` files never land in the repo.
 
 - **Load golden.** Drive persistence. Run
-  `scripts/verify-hnsw-rs.sh drive persist-v3 --run-id $RUN_ID`.
+  `scripts/verify-bifrost.sh drive persist-v3 --run-id $RUN_ID`.
   The helper runs
   `cargo test --all-features --test interoperability -- --nocapture`
   then

@@ -44,7 +44,7 @@ pub struct SearchHit {
 /// Query-time candidate width can be changed after construction:
 ///
 /// ```
-/// # use hnsw_rs::{Config, HnswIndex};
+/// # use bifrost::{Config, HnswIndex};
 /// let mut index = HnswIndex::new(Config {
 ///     dim: 2,
 ///     rng_seed: Some(1),
@@ -54,14 +54,14 @@ pub struct SearchHit {
 /// index.set_ef_search(8)?;
 /// assert_eq!(index.config().ef_search, 8);
 /// let _ = index.search(&[1.0, 0.0], 1)?;
-/// # Ok::<(), hnsw_rs::Error>(())
+/// # Ok::<(), bifrost::Error>(())
 /// ```
 ///
 /// Replacing the graph or mutating `dim` through the old public fields does
 /// not compile:
 ///
 /// ```compile_fail
-/// # use hnsw_rs::{Config, Graph, HnswIndex};
+/// # use bifrost::{Config, Graph, HnswIndex};
 /// let mut index = HnswIndex::new(Config {
 ///     dim: 2,
 ///     ..Config::default()
@@ -71,7 +71,7 @@ pub struct SearchHit {
 /// ```
 ///
 /// ```compile_fail
-/// # use hnsw_rs::{Config, HnswIndex};
+/// # use bifrost::{Config, HnswIndex};
 /// let mut index = HnswIndex::new(Config {
 ///     dim: 2,
 ///     ..Config::default()
@@ -347,7 +347,7 @@ impl HnswIndex {
     /// A second `build` is rejected and does not replace the existing graph:
     ///
     /// ```
-    /// # use hnsw_rs::{Config, Error, HnswIndex};
+    /// # use bifrost::{Config, Error, HnswIndex};
     /// let mut index = HnswIndex::new(Config {
     ///     dim: 2,
     ///     rng_seed: Some(1),
@@ -360,7 +360,7 @@ impl HnswIndex {
     ///     Err(Error::DuplicateExternalId(0))
     /// ));
     /// assert_eq!(index.len(), 2);
-    /// # Ok::<(), hnsw_rs::Error>(())
+    /// # Ok::<(), bifrost::Error>(())
     /// ```
     pub fn build(&mut self, vectors: &[&[f32]]) -> Result<()> {
         for (index, vector) in vectors.iter().enumerate() {

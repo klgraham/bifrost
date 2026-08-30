@@ -117,7 +117,7 @@ fn main() -> Result<()> {
         .map_err(|_| "OPENAI_API_KEY must be set to generate embeddings")?;
     let client = Client::builder()
         .timeout(Duration::from_secs(180))
-        .user_agent("hnsw-rs-fiqa-benchmark/1")
+        .user_agent("bifrost-fiqa-benchmark/1")
         .build()?;
 
     println!(
@@ -277,7 +277,7 @@ fn download_archive(path: &Path) -> Result<()> {
     println!("Downloading {FIQA_URL}...");
     let client = Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("hnsw-rs-fiqa-benchmark/1")
+        .user_agent("bifrost-fiqa-benchmark/1")
         .build()?;
     let mut response = client.get(FIQA_URL).send()?.error_for_status()?;
     let temporary = path.with_extension("zip.part");

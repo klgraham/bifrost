@@ -1,7 +1,7 @@
 # API errors
 
 API errors let a caller distinguish bad configuration, wrong vector width, and
-reused external IDs via typed `hnsw_rs::Error` values instead of panics.
+reused external IDs via typed `bifrost::Error` values instead of panics.
 
 ## Sub-features
 
@@ -17,16 +17,16 @@ reused external IDs via typed `hnsw_rs::Error` values instead of panics.
 - Call `insert` or `search` with a slice whose length is not `Config::dim`.
 - Insert the same external id twice (README: "Duplicate external IDs are rejected").
 
-## Driving it with verify-hnsw-rs
+## Driving it with verify-bifrost
 
 Preconditions:
 
-- `scripts/verify-hnsw-rs.sh doctor` exited 0.
-- `scripts/verify-hnsw-rs.sh launch --run-id $RUN_ID` compiled tests.
+- `scripts/verify-bifrost.sh doctor` exited 0.
+- `scripts/verify-bifrost.sh launch --run-id $RUN_ID` compiled tests.
 - No extra env vars. Do not pass `--features fiqa-prep`.
 
 - **Dimension mismatch.** Drive the error tests. Run
-  `scripts/verify-hnsw-rs.sh drive api-errors --run-id $RUN_ID`.
+  `scripts/verify-bifrost.sh drive api-errors --run-id $RUN_ID`.
   The helper runs
   `cargo test --all-features --lib -- --nocapture dimension_mismatches_return_errors sparse_and_duplicate_external_ids invalid_configs_are_rejected`.
   Exit code `0`. Transcript contains

@@ -19,17 +19,17 @@ external IDs and retrieve at most `k` nearest neighbors by cosine distance
 - Follow the README usage example (`dim: 4`, ids `100` and `5_000`, query
   `[0.98, 0.02, 0.0, 0.0]` expecting nearest id `100`).
 
-## Driving it with verify-hnsw-rs
+## Driving it with verify-bifrost
 
 Preconditions:
 
-- `scripts/verify-hnsw-rs.sh doctor` exited 0 for this checkout.
-- `scripts/verify-hnsw-rs.sh launch --run-id $RUN_ID` compiled `--all-features` tests.
+- `scripts/verify-bifrost.sh doctor` exited 0 for this checkout.
+- `scripts/verify-bifrost.sh launch --run-id $RUN_ID` compiled `--all-features` tests.
 - Scratch `TMPDIR` is the launch scratch dir for `$RUN_ID`.
 
 - **Insert and nearest neighbor.** Drive the lib tests that insert three
   4-d basis vectors and search `k=2`. Run
-  `scripts/verify-hnsw-rs.sh drive insert-and-search --run-id $RUN_ID`.
+  `scripts/verify-bifrost.sh drive insert-and-search --run-id $RUN_ID`.
   The helper runs
   `cargo test --all-features --lib -- --nocapture insert_and_search cosine_distance_ranking_is_correct empty_and_single_vector_indexes`.
   Exit code `0`. Transcript contains

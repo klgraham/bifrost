@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hnsw_rs::{Config, HnswIndex, vector::dot};
+use bifrost::{Config, HnswIndex, vector::dot};
 use hnsw_rs_upstream::prelude::{Distance, Hnsw};
 use usearch::{Index as UsearchIndex, IndexOptions, MetricKind, ScalarKind};
 
@@ -190,7 +190,7 @@ fn main() -> Result<()> {
     let truth = exact_top_k(vectors, queries, parameters.k);
     let truth_elapsed = truth_started.elapsed();
 
-    println!("Building hnsw-rs (local checkout)...");
+    println!("Building Bifrost (local checkout)...");
     let build_started = Instant::now();
     let mut ours = build_ours(vectors, parameters);
     let ours_build = build_started.elapsed();
@@ -239,7 +239,7 @@ fn main() -> Result<()> {
     println!("| implementation | build (s) | build vectors/s |");
     println!("|---|---:|---:|");
     for (name, build) in [
-        ("hnsw-rs (this crate)", ours_build),
+        ("Bifrost (this crate)", ours_build),
         ("hnsw_rs (upstream)", upstream_build),
         ("USearch", usearch_build),
     ] {
@@ -258,7 +258,7 @@ fn main() -> Result<()> {
 
         let ours_search = measure_search(queries, parameters.repetitions, |query| {
             ours.search(query, parameters.k)
-                .expect("hnsw-rs search failed")
+                .expect("Bifrost search failed")
                 .into_iter()
                 .map(|hit| hit.id)
                 .collect()
@@ -283,7 +283,7 @@ fn main() -> Result<()> {
         });
         let rows = [
             SearchRow {
-                name: "hnsw-rs (this crate)",
+                name: "Bifrost (this crate)",
                 recall: recall_at_k(&truth, &ours_search.ids),
                 semantic: dataset
                     .relevance
@@ -361,11 +361,11 @@ fn main() -> Result<()> {
         let indexes = directory.join("indexes");
         fs::create_dir_all(&indexes)?;
         let path = indexes.join(format!(
-            "hnsw-rs-m{}-efc{}-seed{}.hnsw",
+            "bifrost-m{}-efc{}-seed{}.hnsw",
             parameters.m, parameters.ef_construction, parameters.seed
         ));
         ours.save(&path)?;
-        println!("Saved the hnsw-rs index to {}.", path.display());
+        println!("Saved the Bifrost index to {}.", path.display());
     }
     Ok(())
 }
@@ -661,11 +661,11 @@ fn build_ours(vectors: &[Vec<f32>], parameters: Parameters) -> HnswIndex {
         rng_seed: Some(parameters.seed),
         ..Config::default()
     })
-    .expect("valid hnsw-rs benchmark configuration");
+    .expect("valid Bifrost benchmark configuration");
     for (id, vector) in vectors.iter().enumerate() {
         index
             .insert(id as u32, vector)
-            .expect("hnsw-rs insertion failed");
+            .expect("Bifrost insertion failed");
     }
     index
 }
