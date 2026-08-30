@@ -1,338 +1,148 @@
 # Bifrost
 
-Bifrost is a compact Rust implementation of Hierarchical Navigable Small World
-(HNSW) search for normalized vector embeddings.
+Bifrost navigates vector space.
 
-It supports incremental insertion, cosine-distance search, stable Rust SIMD
-acceleration, and `.hnsw` v3 persistence.
+Bifrost is a Rust crate for approximate nearest-neighbor search. It keeps
+unit-normalized embeddings in an HNSW graph and returns the closest caller IDs
+it can find. Use it when you want ANN inside a Rust process: incremental insert,
+cosine-distance search, and memory-mapped `.hnsw` snapshots. There is no server,
+CLI, or network protocol.
 
-## Features
+The product is Bifrost. The algorithm is Hierarchical Navigable Small World,
+HNSW. Call `HnswIndex`. Tune `m`, `ef_construction`, and `ef_search`. Save
+`.hnsw` files that still carry the `HNSW` magic. Those names are the algorithm,
+not a second product name.
 
-- Dynamic insertion without rebuilding the index
-- Sparse caller-facing `u32` IDs backed by dense internal node indexes
-- Per-layer sorted, duplicate-free adjacency with HNSW `Mmax` / `Mmax0` degree caps
-- Cosine distance optimized for pre-normalized vectors
-- AVX2 on detected `x86_64` CPUs, NEON on `aarch64`, and a scalar fallback
-- Memory-mapped, bounds-checked file access
-- CRC-32 integrity checking and atomic snapshot replace (save and v2-to-v3 migration)
-- Deterministic v3 persistence with byte-for-byte fixture coverage
+## Install
 
-Deletion, updates, concurrent mutation, filtering, and quantization are not
-currently supported.
+The crate name is `bifrost`. The package sets `publish = false`, so it is not
+on crates.io. Depend on this repository:
+
+```toml
+[dependencies]
+bifrost = { git = "https://github.com/klgraham/bifrost" }
+```
+
+Rust 1.85 or newer.
 
 ## Usage
 
 ```rust
 use bifrost::{Config, HnswIndex};
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut index = HnswIndex::new(Config {
-    dim: 4,
-    rng_seed: Some(42), // omit for an operating-system seed
-    ..Config::default()
-})?;
+fn main() -> bifrost::Result<()> {
+    let mut index = HnswIndex::new(Config {
+        dim: 4,
+        m: 16,
+        ef_construction: 200,
+        ef_search: 100,
+        rng_seed: Some(42),
+        ..Config::default()
+    })?;
 
-index.insert(100, &[1.0, 0.0, 0.0, 0.0])?;
-index.insert(5_000, &[0.0, 1.0, 0.0, 0.0])?;
+    index.insert(100, &[1.0, 0.0, 0.0, 0.0])?;
+    index.insert(5_000, &[0.0, 1.0, 0.0, 0.0])?;
 
-let hits = index.search(&[0.9998, 0.02, 0.0, 0.0], 10)?;
-assert_eq!(hits[0].id, 100);
-# Ok(())
-# }
+    let hits = index.search(&[0.9998, 0.02, 0.0, 0.0], 10)?;
+    assert_eq!(hits[0].id, 100);
+    Ok(())
+}
 ```
 
-`insert` and `search` return a dimension error instead of panicking when a
-slice does not match `Config::dim`. The public helpers `vector::dot`,
-`vector::cosine_distance`, and `vector::cosine_similarity` also return
-`Error::DimensionMismatch` when their arguments have different lengths.
-Duplicate external IDs are rejected. `HnswIndex::build` is a convenience for
-an empty index: it inserts the batch with dense IDs `0..n-1`. A second
-`build`, or `build` after any insert that already used one of those IDs,
-returns `Error::DuplicateExternalId`. Use `insert` to append with
-caller-chosen IDs.
-Non-finite or badly normalized vectors `debug_assert` in debug builds; set
-`Config::check_vectors` (or `set_check_vectors` on a live index or mapped
-snapshot) to return `Error::InvalidVector` in release as well.
-`insert` is all-or-nothing: a failure after the node is appended does not
-consume the ID, leave the node visible to search, or keep a one-sided edge.
-`Config::m`, `Config::ef_construction`, and `Config::ef_search` must be greater
-than zero. Construction parameters are captured at `HnswIndex::new`; `config()`
-returns a copy, and `set_ef_search` is the supported way to change the query
-candidate width (`0` is rejected). `Config::dim` and the graph cannot be mutated
-after construction: inspect neighbors with `edges` / `degree` / `layer_count`.
-Search uses a layer-0 candidate width of `max(ef_search, k)`, so asking for more
-hits than `Config::ef_search` still returns up to `k` neighbors when the graph
-contains them. `search_with_ef` uses `max(ef, k)` for one query without changing the
-stored width. A new node keeps at most `M` neighbors at layer 0 and
-`max(M / 2, 1)` at upper layers, chosen with the Malkov & Yashunin / hnswlib
-diversity heuristic (keep a candidate if it is closer to the new node than to
-any already chosen neighbor). After each reverse link, the neighbor's
-outgoing adjacency is re-selected with the same heuristic and capped at `2M`
-at layer 0 (`Mmax0`) and `M` at upper layers (`Mmax`). Pruning is one-sided:
-a dropped `A → B` edge is not removed from `B`, so the graph can become
-directed after shrink. Random levels come from the maintained `rand` crate.
-A configured seed is repeatable with the pinned dependency version.
+`m`, `ef_construction`, and `ef_search` must be greater than zero.
+`HnswIndex::new` captures the construction parameters. `set_ef_search` is the
+supported way to change the stored query width later. `search` uses
+`max(ef_search, k)`, so a request larger than `ef_search` can still return up
+to `k` hits. `search_with_ef` overrides the width for one query.
 
-### Normalized-vector contract
+`insert` takes a caller-chosen `u32` id. A second insert of the same id returns
+`Error::DuplicateExternalId`. A slice that does not match `Config::dim` returns
+`Error::DimensionMismatch` instead of panicking. `HnswIndex::build` fills an
+empty index and assigns dense IDs `0..n-1`. A second `build`, or `build` after
+an insert that already used one of those IDs, returns `DuplicateExternalId`.
+Append later with `insert`.
 
-HNSW construction and search use `1 - dot(a, b)`. Inputs must therefore be
-unit-normalized. This is the fast form of cosine distance and ranges from 0 for
-identical unit vectors to 2 for opposite vectors. Use
-`bifrost::vector::cosine_similarity` when working with arbitrary vectors
-(it returns `Error::DimensionMismatch` on length mismatch), but normalize
-them before inserting them into an index.
+Distance is `1 - dot(a, b)`. Insert and search vectors must be unit-normalized.
+That is the fast cosine form: 0 for identical unit vectors, 2 for opposites.
+`bifrost::vector::cosine_similarity` accepts arbitrary vectors. Normalize
+before the index sees them. Debug builds `debug_assert` finite coordinates and
+an L2 norm within `0.01` of 1 (`vector::UNIT_NORM_TOLERANCE`). Set
+`Config::check_vectors` so release builds return `Error::InvalidVector` for the
+same failures. The flag is not stored in `.hnsw` snapshots. Call
+`LoadedHnsw::set_check_vectors` after mapping if queries should fail that way.
 
-Debug builds `debug_assert` that every insert and search vector is finite and
-that `||v||` is within `0.01` of `1` (the same tolerance as the FiQA preparer,
-exposed as `bifrost::vector::UNIT_NORM_TOLERANCE`). `Config::check_vectors`
-defaults to `false` so release builds keep the previous unchecked contract;
-when set, insert and search return `Error::InvalidVector` instead. The flag is
-not persisted in `.hnsw` snapshots — call `LoadedHnsw::set_check_vectors`
-after mapping if query checks should return errors.
-
-### Level multiplier
-
-`Config::level_mult` is the probability of stopping at the current level, so
-`P(level >= L) = (1 - level_mult)^L`. `1.0` always assigns level zero; `0.0`
-always assigns `max_level`. `Config::default()` uses `1.0 - 1.0 / m`
-(`0.9375` when `m = 16`), matching the HNSW paper and hnswlib so
-`P(level >= L) = m^{-L}`. Use `Config::level_mult_for_m(m)` when changing `m`
-and keeping that distribution. Existing `.hnsw` snapshots that stored `0.5`
-still load.
+`Config::default()` sets `dim = 384`, `m = 16`, `ef_construction = 200`,
+`ef_search = 100`, `max_level = 16`, `level_mult = 1 - 1/m` (`0.9375` when
+`m = 16`), no `rng_seed`, and `check_vectors = false`.
 
 ## Persistence
+
+`HnswIndex::save` writes a version-3 `.hnsw` snapshot. `load_file`,
+`LoadedHnsw::open`, and `HnswIndex::load` memory-map that file for query-only
+search. They do not rebuild a mutable `HnswIndex`. Further inserts still need a
+live builder.
+
+The file magic is `HNSW`. `bifrost::MAGIC` is `0x484E5357`. Current writes are
+version 3. A valid version 2 file is rewritten to v3 through a flushed
+temporary file and a same-directory `rename`, then returned. `save` uses that
+same temp, `sync_all`, and `rename` path, so a crash mid-write cannot replace a
+good file with a truncated one.
 
 ```rust
 use bifrost::{load_file, Config, HnswIndex};
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let path = std::env::temp_dir().join("example.hnsw");
-let mut index = HnswIndex::new(Config {
-    dim: 2,
-    rng_seed: Some(1),
-    ..Config::default()
-})?;
-index.insert(7, &[1.0, 0.0])?;
-index.save(&path)?;
+fn main() -> bifrost::Result<()> {
+    let path = std::env::temp_dir().join("example.hnsw");
+    let mut index = HnswIndex::new(Config {
+        dim: 2,
+        m: 16,
+        ef_construction: 200,
+        ef_search: 100,
+        rng_seed: Some(1),
+        ..Config::default()
+    })?;
+    index.insert(7, &[1.0, 0.0])?;
+    index.save(&path)?;
 
-let loaded = load_file(&path)?;
-assert_eq!(loaded.header().node_count, 1);
-assert_eq!(loaded.node(0).unwrap().external_id, 7);
-assert_eq!(
-    loaded.vector(0).unwrap().iter().collect::<Vec<_>>(),
-    [1.0, 0.0]
-);
-let hits = loaded.search(&[1.0, 0.0], 1)?;
-assert_eq!(hits[0].id, 7);
-# std::fs::remove_file(path)?;
-# Ok(())
-# }
+    let loaded = load_file(&path)?;
+    assert_eq!(loaded.header().node_count, 1);
+    assert_eq!(loaded.node(0).unwrap().external_id, 7);
+    let hits = loaded.search(&[1.0, 0.0], 1)?;
+    assert_eq!(hits[0].id, 7);
+    Ok(())
+}
 ```
 
-`LoadedHnsw::open` and `load_file` are the primary mapping constructors;
-`HnswIndex::load` is the same query-only mapping and does not rebuild a
-mutable index. Loaded files remain memory-mapped: `search` walks the on-disk
-graph and vectors without re-inserting them, using `max(ef_search, k)` as the
-candidate width, matching live `HnswIndex::search`. `search_with_ef`
-overrides the stored `ef_search` on both the builder and the mapped snapshot.
-`node`,
-`vector`, and `edges` expose checked views tied to the mapping's lifetime;
-values are decoded from explicit little-endian bytes rather than obtained
-through unaligned pointer casts.
+The mapping is read-only. Do not truncate, overwrite in place, or otherwise
+mutate a mapped `.hnsw` file while a `LoadedHnsw` for that path is alive.
 
-The file is opened read-only. Do not truncate, overwrite in place, or otherwise
-mutate a mapped `.hnsw` file while a `LoadedHnsw` for that path is alive: a
-shared `[u8]` mapping is unsound if those bytes change. `save` / `save_file`
-and v2-to-v3 migration write `.{name}.tmp-{pid}-{nonce}`, `sync_all`, then
-`rename` over the destination, so a crash mid-write cannot replace a previous
-good file with a truncated one, and an existing mapping stays attached to the
-previous inode.
+## The algorithm
 
-The v3 format contains:
+HNSW is the graph search of Yu. A. Malkov and D. A. Yashunin,
+[Efficient and robust approximate nearest neighbor search using Hierarchical
+Navigable Small World graphs](https://arxiv.org/abs/1603.09320). Neighbor
+selection follows that paper and [hnswlib](https://github.com/nmslib/hnswlib):
+the diversity heuristic (paper Alg. 4), level multiplier `1 - 1/m`
+(`Config::level_mult_for_m`), at most `M` neighbors for a new node at layer 0
+and `max(M / 2, 1)` above, then outgoing caps of `2M` at layer 0 (`Mmax0`) and
+`M` on upper layers (`Mmax`). Reverse-link pruning is one-sided. A dropped
+outgoing edge can remain as an incoming edge on the peer.
 
-1. A 64-byte header, including configuration, entry-point metadata, and CRC.
-2. Row-major `f32` vector data.
-3. Twelve-byte node records containing external ID, level, and vector offset.
-4. Per-layer edge offset and length tables.
-5. Flattened dense `u32` neighbor indexes.
+Bifrost implements that algorithm. It does not rename it.
 
-The CRC covers every byte after the header. Valid v2 files are rewritten to v3
-through the same flushed temporary file and same-directory atomic rename before
-being returned to the caller.
+## Limits
 
-Serde is intentionally not used for this file format. `.hnsw` is a fixed
-cross-language byte layout, not general Rust object serialization; Serde would
-still require a custom serializer/deserializer for its offsets, CRC, mmap
-views, and migration rules. Integer and float fields instead use the standard
-library's explicit little-endian byte conversions.
+Deletion, in-place updates, concurrent mutation, filtering, and quantization
+are not supported.
 
-## SIMD
-
-Portable `std::simd` is not stable in Rust 1.96, so this crate uses stable
-`std::arch` intrinsics. Runtime AVX2 detection is used on `x86_64`; NEON is part
-of the baseline `aarch64` architecture. Every platform retains the safe scalar
-kernel, which also serves as the test oracle. Fused multiply-add is avoided so
-distance accumulation uses eight partial sums in every kernel.
-
-Unsafe code is confined to:
-
-- Read-only `memmap2` mapping after file-length checks
-- Bounds-checked architecture loads and stores in `src/vector.rs`
-
-## Verification
+## Verify
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
-cargo bench --bench distance
-cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --manifest-path benchmarks/competitors/Cargo.toml
 ```
 
-CI runs the library fmt / clippy / test steps on Ubuntu, macOS, and Windows.
-A separate Ubuntu job clippy-checks the competitor crate (including
-`fiqa-prep`) and runs its unit tests with default features, so USearch's C++17
-backend and NumKong kernels are compiled and the local fixture test covers
-`level_mult` / `ef_search` wiring without downloading BEIR FiQA. That job
-installs `gcc`/`g++` and uses them as `CC`/`CXX` and the Rust linker (clang 18
-can crash compiling NumKong, and clang-as-`cc` plus rust-lld may not find
-`libstdc++`).
-
-The persistence suite loads a deterministic v3 golden file and requires the
-writer to reproduce all 220 bytes exactly. Its SHA-256 is documented in
-`tests/fixtures/README.md`.
-
-### Competitor benchmark
-
-`benchmarks/competitors` is an independent crate that compares this project
-with pure-Rust `hnsw_rs` and the Rust bindings for USearch. Keeping it separate
-prevents the competing libraries and USearch's native backend from becoming
-development dependencies of the library crate. The benchmark generates
-deterministic unit-normalized `f32` vectors, builds each index through its
-public Rust API, and reports sequential build throughput, query latency, query
-throughput, and recall@k against an exact inner-product scan.
-
-The default comparison uses 10,000 384-dimensional vectors, 100 queries,
-`k=10`, `M=16`, `ef_construction=200`, `ef_search=100`, and the paper /
-hnswlib level multiplier `1 - 1/M` (`Config::level_mult_for_m`). The three
-indexes use equivalent inner-product rankings: this crate's normalized cosine
-distance, a non-negative `max(0, 1 - dot)` custom distance through `hnsw_rs`'s
-public distance interface, and USearch's `MetricKind::IP` with `f32` storage.
-The custom upstream distance avoids `hnsw_rs::DistDot` panicking when normal
-`f32` rounding makes a unit vector's self-dot slightly greater than one; the
-zero clamp affects only that rounding error. Data generation, exact ground
-truth, and dependency setup are outside the reported timings.
-
-Every workload setting can be overridden for quick smoke runs or larger tests:
-
-```bash
-HNSW_BENCH_VECTORS=100000 \
-HNSW_BENCH_DIMENSIONS=768 \
-HNSW_BENCH_QUERIES=1000 \
-HNSW_BENCH_REPETITIONS=10 \
-HNSW_BENCH_K=10 \
-HNSW_BENCH_M=16 \
-HNSW_BENCH_EF_CONSTRUCTION=200 \
-HNSW_BENCH_EF_SEARCH=100 \
-HNSW_BENCH_SEED=42 \
-cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
-```
-
-Set `HNSW_BENCH_EF_SEARCHES` to a comma-separated list to build each index
-once and measure a controlled query-width sweep over the same graph:
-
-```bash
-HNSW_BENCH_DIMENSIONS=1536 \
-HNSW_BENCH_EF_SEARCHES=200,400,800 \
-cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
-```
-
-The list overrides `HNSW_BENCH_EF_SEARCH`. This avoids rebuilding randomized
-graphs between points on the latency-versus-recall curve.
-
-#### BEIR FiQA-2018 with OpenAI embeddings
-
-The independent benchmark crate can prepare and consume a real
-[BEIR FiQA-2018](https://github.com/beir-cellar/beir) retrieval fixture. The
-preparer embeds the 57,600 non-empty corpus documents and the 648 queries in
-the test qrels with OpenAI `text-embedding-3-small` at its default 1,536
-dimensions. (The source archive contains 38 empty corpus rows that are not
-referenced by the test qrels; these are skipped.)
-Generated source data, request caches, and vectors live under
-`benchmarks/competitors/data/`, which is ignored by Git.
-
-First, download and validate the public dataset without making an OpenAI API
-request:
-
-```bash
-cargo run --release \
-  --manifest-path benchmarks/competitors/Cargo.toml \
-  --features fiqa-prep \
-  --bin prepare-fiqa \
-  -- --download-only
-```
-
-Then review the expected API usage, set `OPENAI_API_KEY`, and generate the
-fixture:
-
-```bash
-OPENAI_API_KEY=... cargo run --release \
-  --manifest-path benchmarks/competitors/Cargo.toml \
-  --features fiqa-prep \
-  --bin prepare-fiqa
-```
-
-Embedding responses are cached one batch at a time, so an interrupted run can
-resume without repeating completed requests. The tool validates response
-indexes, dimensions, and vector norms before atomically packing little-endian
-`f32` files. Use `--max-corpus` and `--max-queries` for a lower-cost fixture;
-`--help` lists the model, dimension, batch-size, and output overrides. OpenAI's
-[embeddings API reference](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
-documents the request used by the preparer.
-
-Run the comparison against the prepared vectors with:
-
-```bash
-HNSW_BENCH_FIXTURE=benchmarks/competitors/data/fiqa-text-embedding-3-small \
-HNSW_BENCH_EF_SEARCHES=100,200,400 \
-cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
-```
-
-After the timed comparison, the runner saves this crate's built index under
-the fixture directory as
-`indexes/bifrost-m<M>-efc<EF_CONSTRUCTION>-seed<SEED>.hnsw`. The raw `f32`
-files remain the canonical cross-implementation fixture; the `.hnsw` file is a
-derived, memory-mapped index for later query-only use.
-
-For a fixture, `HNSW_BENCH_VECTORS` and `HNSW_BENCH_QUERIES` optionally limit
-the loaded prefix, while its manifest supplies the vector dimension. In
-addition to build and query performance, the report distinguishes exact ANN
-recall from retrieval quality: nDCG@k and qrels recall@k use only test queries
-that retain a relevant document in the loaded corpus subset.
-
-Run benchmark comparisons on an otherwise idle machine. The suite deliberately
-uses one caller for insertion and search so library-internal behavior is being
-compared rather than different caller-side parallelization strategies.
-
-## Design notes
-
-Construction uses owned vectors and mutable per-layer adjacency. Persistence
-flattens edges only while saving. This keeps mutation straightforward while
-retaining the original mmap-friendly snapshot representation.
-
-Insertion and reverse-link pruning share the paper / hnswlib diversity
-heuristic (Alg. 4), not simple nearest-`M` (Alg. 3). A candidate is kept only
-when it is closer to the query node than to any already chosen neighbor, up
-to `M` at layer 0 (`max(M / 2, 1)` at upper layers) for a new node and `2M` /
-`M` when shrinking an existing list. The peer keeps its link back to the hub;
-search follows outgoing edges only.
-
-Layer search (`search_knn` / `search_layer`, shared by `HnswIndex` and
-`LoadedHnsw`) marks visits with a generation-stamped buffer reused across
-layers of one query, and pops the candidate frontier from a binary heap
-instead of re-sorting it each hop. Results stay nearest-first with
-node-index tie-breaks. Neighbors outside the visit buffer are skipped.
+CI also runs `cargo fmt --check` and
+`cargo clippy --all-targets --all-features -- -D warnings` on Ubuntu and macOS.
 
 ## License
 
