@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Wrap AVX2 and NEON init/arithmetic intrinsics in `unsafe { }` so
+  `#![forbid(unsafe_op_in_unsafe_fn)]` compiles on rustc 1.85. Those calls
+  stay unsafe operations on the crate MSRV even inside `unsafe fn`.
+  `#[allow(unused_unsafe)]` covers later rustc, where the same calls are safe.
 - The crates.io package is `bifrost-index`. The Rust crate path stays `bifrost`,
   so callers still `use bifrost::{Config, HnswIndex}`.
 - Rename the Cargo package from `hnsw-rs` to `bifrost` and the Rust crate path
