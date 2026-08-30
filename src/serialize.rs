@@ -586,7 +586,7 @@ fn parse_sections(data: &[u8], header: &Header) -> Result<Sections> {
     let table_bytes = checked_product(&[slots, 4])?;
     let edge_offsets = take_range(data.len(), &mut offset, table_bytes)?;
     let edge_lengths = take_range(data.len(), &mut offset, table_bytes)?;
-    if (data.len() - offset) % 4 != 0 {
+    if !(data.len() - offset).is_multiple_of(4) {
         return Err(Error::InvalidFile("edge data is not u32-aligned"));
     }
     let edges = offset..data.len();

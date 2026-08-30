@@ -34,7 +34,7 @@ instead:
 bifrost-index = { git = "https://github.com/klgraham/bifrost" }
 ```
 
-Rust 1.85 or newer.
+Rust 1.87 or newer.
 
 ## Usage
 
