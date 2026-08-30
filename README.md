@@ -15,12 +15,23 @@ not a second product name.
 
 ## Install
 
-The crate name is `bifrost`. The package sets `publish = false`, so it is not
-on crates.io. Depend on this repository:
+The crates.io package is `bifrost-index`. The Rust crate path stays `bifrost`.
+
+```bash
+cargo add bifrost-index
+```
+
+```rust
+use bifrost::{Config, HnswIndex};
+```
+
+`bifrost` is already taken on crates.io. The GitHub repo is still
+[klgraham/bifrost](https://github.com/klgraham/bifrost). To depend on git
+instead:
 
 ```toml
 [dependencies]
-bifrost = { git = "https://github.com/klgraham/bifrost" }
+bifrost-index = { git = "https://github.com/klgraham/bifrost" }
 ```
 
 Rust 1.85 or newer.

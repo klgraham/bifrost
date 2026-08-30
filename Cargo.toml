@@ -1,13 +1,19 @@
 [package]
-name = "bifrost"
+name = "bifrost-index"
 version = "0.2.0"
 edition = "2024"
 description = "Bifrost is a compact, mmap-friendly HNSW vector index"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/klgraham/bifrost"
+documentation = "https://docs.rs/bifrost-index"
 rust-version = "1.85"
-publish = false
 exclude = ["benchmarks/"]
+keywords = ["hnsw", "ann", "vector", "nearest-neighbor"]
+categories = ["algorithms", "data-structures"]
+
+[lib]
+name = "bifrost"
 
 [dependencies]
 crc32fast = "1.5"

@@ -11,7 +11,8 @@ FIXTURE_HEX="${REPO_ROOT}/tests/fixtures/v3.hex"
 ARTIFACTS_ROOT="${SKILL_DIR}/artifacts"
 EXPECTED_SHA="70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca"
 EXPECTED_BYTES="220"
-EXPECTED_NAME="bifrost"
+EXPECTED_NAME="bifrost-index"
+EXPECTED_LIB_NAME="bifrost"
 EXPECTED_VERSION="0.2.0"
 EXPECTED_RUST_VERSION="1.85"
 
@@ -87,7 +88,7 @@ run_dir_for() {
 
 require_repo() {
   [[ -f "${MANIFEST}" ]] || die "Cargo.toml not found at ${MANIFEST}"
-  grep -q '^name = "bifrost"$' "${MANIFEST}" || die "${MANIFEST} is not crate bifrost"
+  grep -q '^name = "bifrost-index"$' "${MANIFEST}" || die "${MANIFEST} is not crate bifrost-index"
 }
 
 cmd_doctor() {
@@ -101,10 +102,11 @@ cmd_doctor() {
   rustc_v="$(rustc --version)"
 
   python3 - "${MANIFEST}" "${FIXTURE_HEX}" "${EXPECTED_SHA}" "${EXPECTED_BYTES}" \
-    "${EXPECTED_NAME}" "${EXPECTED_VERSION}" "${EXPECTED_RUST_VERSION}" "${rustc_v}" <<'PY'
+    "${EXPECTED_NAME}" "${EXPECTED_LIB_NAME}" "${EXPECTED_VERSION}" \
+    "${EXPECTED_RUST_VERSION}" "${rustc_v}" <<'PY'
 import pathlib, re, sys
 
-manifest, fixture, expected_sha, expected_bytes, expected_name, expected_version, expected_rv, rustc_line = sys.argv[1:]
+manifest, fixture, expected_sha, expected_bytes, expected_name, expected_lib, expected_version, expected_rv, rustc_line = sys.argv[1:]
 text = pathlib.Path(manifest).read_text()
 
 def field(key):
@@ -122,8 +124,11 @@ if version != expected_version:
     raise SystemExit(f"error: package version {version!r} != {expected_version!r}")
 if rust_version != expected_rv:
     raise SystemExit(f"error: rust-version {rust_version!r} != {expected_rv!r}")
-if "publish = false" not in text:
-    raise SystemExit("error: expected publish = false")
+lib = re.search(r'^\[lib\]\s*^name = "([^"]+)"', text, re.M)
+if not lib or lib.group(1) != expected_lib:
+    raise SystemExit(f"error: expected [lib] name = {expected_lib!r}")
+if re.search(r'^publish = false\b', text, re.M):
+    raise SystemExit("error: expected crate to be publishable (publish = false is set)")
 
 def parse_semver(s):
     parts = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", s)
