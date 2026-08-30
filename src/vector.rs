@@ -109,7 +109,9 @@ unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 {
         _mm256_add_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_setzero_ps, _mm256_storeu_ps,
     };
 
-    let mut accumulator = _mm256_setzero_ps();
+    // SAFETY: these arithmetic/init intrinsics are still `unsafe fn` on rustc
+    // 1.85. `#[target_feature(enable = "avx2")]` is the only extra contract.
+    let mut accumulator = unsafe { _mm256_setzero_ps() };
     let mut index = 0;
     while index + 8 <= a.len() {
         // SAFETY: the loop condition guarantees both pointers have eight
@@ -117,7 +119,8 @@ unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 {
         let left = unsafe { _mm256_loadu_ps(a.as_ptr().add(index)) };
         // SAFETY: same bounds argument as the left-hand load.
         let right = unsafe { _mm256_loadu_ps(b.as_ptr().add(index)) };
-        accumulator = _mm256_add_ps(accumulator, _mm256_mul_ps(left, right));
+        // SAFETY: same target-feature contract as the zeroed accumulator.
+        accumulator = unsafe { _mm256_add_ps(accumulator, _mm256_mul_ps(left, right)) };
         index += 8;
     }
     let mut lanes = [0.0_f32; 8];
@@ -137,8 +140,10 @@ unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
-    let mut low = vdupq_n_f32(0.0);
-    let mut high = vdupq_n_f32(0.0);
+    // SAFETY: these arithmetic/init intrinsics are still `unsafe fn` on rustc
+    // 1.85. `#[target_feature(enable = "neon")]` is the only extra contract.
+    let mut low = unsafe { vdupq_n_f32(0.0) };
+    let mut high = unsafe { vdupq_n_f32(0.0) };
     let mut index = 0;
     while index + 8 <= a.len() {
         // SAFETY: the loop condition guarantees four readable elements at each
@@ -150,8 +155,9 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
         let left_high = unsafe { vld1q_f32(a.as_ptr().add(index + 4)) };
         // SAFETY: same bounds argument as left_high.
         let right_high = unsafe { vld1q_f32(b.as_ptr().add(index + 4)) };
-        low = vaddq_f32(low, vmulq_f32(left_low, right_low));
-        high = vaddq_f32(high, vmulq_f32(left_high, right_high));
+        // SAFETY: same target-feature contract as the zeroed accumulators.
+        low = unsafe { vaddq_f32(low, vmulq_f32(left_low, right_low)) };
+        high = unsafe { vaddq_f32(high, vmulq_f32(left_high, right_high)) };
         index += 8;
     }
 
