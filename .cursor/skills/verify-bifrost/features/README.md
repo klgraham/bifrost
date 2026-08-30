@@ -6,7 +6,7 @@ the matching feature file as the recipe.
 
 ## Baseline preconditions
 
-- Work in `/Users/klogram/dev/klogram_labs/hnsw-rs` (or `BIFROST_ROOT`).
+- Work in `/Users/klogram/dev/klogram_labs/bifrost` (or `BIFROST_ROOT`).
 - Toolchain: `cargo`/`rustc` ≥ 1.85 (crate `rust-version`). Current checkout
   was last proven on rustc 1.96.x.
 - Run `scripts/verify-bifrost.sh doctor` and require crate `bifrost@0.2.0` plus
