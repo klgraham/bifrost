@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Project-local harness for verifying the hnsw-rs public Rust API via cargo test.
+# Project-local harness for verifying the Bifrost public Rust API via cargo test.
 # Invocation is documented in ../SKILL.md.
 set -euo pipefail
 
@@ -11,7 +11,7 @@ FIXTURE_HEX="${REPO_ROOT}/tests/fixtures/v3.hex"
 ARTIFACTS_ROOT="${SKILL_DIR}/artifacts"
 EXPECTED_SHA="70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca"
 EXPECTED_BYTES="220"
-EXPECTED_NAME="hnsw-rs"
+EXPECTED_NAME="bifrost"
 EXPECTED_VERSION="0.2.0"
 EXPECTED_RUST_VERSION="1.85"
 
@@ -87,7 +87,7 @@ run_dir_for() {
 
 require_repo() {
   [[ -f "${MANIFEST}" ]] || die "Cargo.toml not found at ${MANIFEST}"
-  grep -q '^name = "hnsw-rs"$' "${MANIFEST}" || die "${MANIFEST} is not crate hnsw-rs"
+  grep -q '^name = "bifrost"$' "${MANIFEST}" || die "${MANIFEST} is not crate bifrost"
 }
 
 cmd_doctor() {

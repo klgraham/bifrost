@@ -1,18 +1,18 @@
 ---
 name: verify-hnsw-rs
 description: >-
-  Verify hnsw-rs, a compact Rust HNSW library, through its public cargo/Rust
+  Verify Bifrost, a compact Rust HNSW library, through its public cargo/Rust
   API (HnswIndex insert, cosine-distance search, .hnsw v3 save/load). Use when
   proving library behavior after index, search, or persistence changes, or
   before treating `cargo test --all-features` as green.
 ---
 
-# Verify hnsw-rs
+# Verify Bifrost
 
-This skill drives **hnsw-rs 0.2.0**, a library crate (`hnsw_rs`) with no web UI,
+This skill drives **Bifrost 0.2.0**, a library crate (`bifrost`) with no web UI,
 CLI, or listening port. The user-facing surface is the public Rust API:
 `Config`, `HnswIndex::{new, insert, search, build, save, len}`, `SearchHit`,
-`load_file` / `LoadedHnsw`, and `hnsw_rs::vector::{dot, cosine_distance,
+`load_file` / `LoadedHnsw`, and `bifrost::vector::{dot, cosine_distance,
 cosine_similarity}`. Documented verification in `README.md` is
 `cargo test --all-features`. Deletion, updates, concurrent mutation, filtering,
 and quantization are **not** supported — do not invent those features.
@@ -37,7 +37,7 @@ export HNSW_VERIFY_RUN_ID="${HNSW_VERIFY_RUN_ID:-$(date +%Y%m%dT%H%M%S)-$$}"
 
 Ready when the helper exits 0 and stdout contains both:
 
-- `ok launch crate=hnsw-rs@0.2.0`
+- `ok launch crate=bifrost@0.2.0`
 - `Finished \`test\` profile`
 
 Teardown is **Cleanup**, not a daemon kill. Cargo/rustc started by launch
@@ -59,7 +59,7 @@ Require all of:
 
 - `cargo` and `rustc` on `PATH`; `rustc` reports a version `>= 1.85.0`
   (`Cargo.toml` `rust-version = "1.85"`, edition 2024).
-- Manifest package `name = "hnsw-rs"`, `version = "0.2.0"`, `publish = false`.
+- Manifest package `name = "bifrost"`, `version = "0.2.0"`, `publish = false`.
 - `tests/interoperability.rs` and `tests/fixtures/v3.hex` exist.
 - Decoded `v3.hex` is exactly 220 bytes with SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`
@@ -90,7 +90,7 @@ Mapped feature IDs and the cargo filters they run (libtest substring after `--`)
 Public-API shape these tests exercise (do not replace with private graph setters):
 
 ```rust
-use hnsw_rs::{load_file, Config, HnswIndex};
+use bifrost::{load_file, Config, HnswIndex};
 
 let mut index = HnswIndex::new(Config {
     dim: 4,

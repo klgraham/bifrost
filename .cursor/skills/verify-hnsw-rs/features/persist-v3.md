@@ -16,7 +16,7 @@ byte-for-byte stable.
 ## How to get to it (user POV)
 
 - After inserts, call `index.save(&path)?` with `path` in a temp directory.
-- Call `hnsw_rs::load_file(&path)?` and read `loaded.header()`, `loaded.node(i)`,
+- Call `bifrost::load_file(&path)?` and read `loaded.header()`, `loaded.node(i)`,
   `loaded.vector(i)`.
 - Follow the README persistence example (`dim: 2`, id `7`, vector `[1.0, 0.0]`).
 - The checked-in golden is `tests/fixtures/v3.hex` (decoded SHA-256

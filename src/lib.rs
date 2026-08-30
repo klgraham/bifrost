@@ -1,4 +1,4 @@
-//! A compact Hierarchical Navigable Small World (HNSW) vector index.
+//! Bifrost is a compact Hierarchical Navigable Small World (HNSW) vector index.
 //!
 //! It supports incremental insertion, approximate nearest-neighbor search with
 //! cosine distance, and mmap-friendly `.hnsw` v3 persistence. Saved snapshots

@@ -1,7 +1,7 @@
-# hnsw-rs
+# Bifrost
 
-A compact Rust implementation of Hierarchical Navigable Small World (HNSW)
-search for normalized vector embeddings.
+Bifrost is a compact Rust implementation of Hierarchical Navigable Small World
+(HNSW) search for normalized vector embeddings.
 
 It supports incremental insertion, cosine-distance search, stable Rust SIMD
 acceleration, and `.hnsw` v3 persistence.
@@ -23,7 +23,7 @@ currently supported.
 ## Usage
 
 ```rust
-use hnsw_rs::{Config, HnswIndex};
+use bifrost::{Config, HnswIndex};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let mut index = HnswIndex::new(Config {
@@ -78,13 +78,13 @@ A configured seed is repeatable with the pinned dependency version.
 HNSW construction and search use `1 - dot(a, b)`. Inputs must therefore be
 unit-normalized. This is the fast form of cosine distance and ranges from 0 for
 identical unit vectors to 2 for opposite vectors. Use
-`hnsw_rs::vector::cosine_similarity` when working with arbitrary vectors
+`bifrost::vector::cosine_similarity` when working with arbitrary vectors
 (it returns `Error::DimensionMismatch` on length mismatch), but normalize
 them before inserting them into an index.
 
 Debug builds `debug_assert` that every insert and search vector is finite and
 that `||v||` is within `0.01` of `1` (the same tolerance as the FiQA preparer,
-exposed as `hnsw_rs::vector::UNIT_NORM_TOLERANCE`). `Config::check_vectors`
+exposed as `bifrost::vector::UNIT_NORM_TOLERANCE`). `Config::check_vectors`
 defaults to `false` so release builds keep the previous unchecked contract;
 when set, insert and search return `Error::InvalidVector` instead. The flag is
 not persisted in `.hnsw` snapshots — call `LoadedHnsw::set_check_vectors`
@@ -103,7 +103,7 @@ still load.
 ## Persistence
 
 ```rust
-use hnsw_rs::{load_file, Config, HnswIndex};
+use bifrost::{load_file, Config, HnswIndex};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let path = std::env::temp_dir().join("example.hnsw");
@@ -301,7 +301,7 @@ cargo run --release --manifest-path benchmarks/competitors/Cargo.toml
 
 After the timed comparison, the runner saves this crate's built index under
 the fixture directory as
-`indexes/hnsw-rs-m<M>-efc<EF_CONSTRUCTION>-seed<SEED>.hnsw`. The raw `f32`
+`indexes/bifrost-m<M>-efc<EF_CONSTRUCTION>-seed<SEED>.hnsw`. The raw `f32`
 files remain the canonical cross-implementation fixture; the `.hnsw` file is a
 derived, memory-mapped index for later query-only use.
 

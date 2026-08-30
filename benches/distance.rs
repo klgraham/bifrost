@@ -1,6 +1,6 @@
 use std::{hint::black_box, time::Instant};
 
-use hnsw_rs::vector::{cosine_distance, dot};
+use bifrost::vector::{cosine_distance, dot};
 
 fn run(name: &str, iterations: usize, mut operation: impl FnMut()) {
     for _ in 0..1_000 {

@@ -1,7 +1,7 @@
 # API errors
 
 API errors let a caller distinguish bad configuration, wrong vector width, and
-reused external IDs via typed `hnsw_rs::Error` values instead of panics.
+reused external IDs via typed `bifrost::Error` values instead of panics.
 
 ## Sub-features
 

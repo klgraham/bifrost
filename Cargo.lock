@@ -50,7 +50,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hnsw-rs"
+name = "bifrost"
 version = "0.2.0"
 dependencies = [
  "crc32fast",

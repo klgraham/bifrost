@@ -1,7 +1,7 @@
-# hnsw-rs verification map
+# Bifrost verification map
 
 This directory is the maintained source for verifying the user-facing behavior
-of the hnsw-rs Rust library. Read the index before driving the crate, then use
+of the Bifrost Rust library. Read the index before driving the crate, then use
 the matching feature file as the recipe.
 
 ## Baseline preconditions
@@ -9,7 +9,7 @@ the matching feature file as the recipe.
 - Work in `/Users/klogram/dev/klogram_labs/hnsw-rs` (or `HNSW_RS_ROOT`).
 - Toolchain: `cargo`/`rustc` ≥ 1.85 (crate `rust-version`). Current checkout
   was last proven on rustc 1.96.x.
-- Run `scripts/verify-hnsw-rs.sh doctor` and require crate `hnsw-rs@0.2.0` plus
+- Run `scripts/verify-hnsw-rs.sh doctor` and require crate `bifrost@0.2.0` plus
   the v3 fixture SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`.
 - Run `scripts/verify-hnsw-rs.sh launch --run-id $RUN_ID` so tests are compiled
@@ -25,7 +25,7 @@ the matching feature file as the recipe.
 - Drive through `verify-hnsw-rs.sh`, which wraps `cargo test --all-features`.
 - Treat every test name and flag as literal.
 - Vectors passed to `insert`/`search` must be unit-normalized (`1 - dot`
-  cosine). `hnsw_rs::vector::cosine_similarity` is for arbitrary vectors and
+  cosine). `bifrost::vector::cosine_similarity` is for arbitrary vectors and
   is not a substitute for normalizing before insert.
 - Restore nothing in the repo after a drive; tests use process-unique temp
   files under `TMPDIR`. Do not remove proof artifacts during cleanup.
