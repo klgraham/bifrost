@@ -6,6 +6,8 @@
   are safe there, so the extra `unsafe { }` wrappers and
   `#[allow(unused_unsafe)]` from #48 are gone. Loads and stores stay in
   `unsafe { }`. `#![forbid(unsafe_op_in_unsafe_fn)]` stays.
+- Use `is_multiple_of` for the leftover edge-payload alignment check so
+  clippy on current stable stays clean.
 - The crates.io package is `bifrost-index`. The Rust crate path stays `bifrost`,
   so callers still `use bifrost::{Config, HnswIndex}`.
 - Rename the Cargo package from `hnsw-rs` to `bifrost` and the Rust crate path
