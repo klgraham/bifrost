@@ -4,6 +4,7 @@
 
 - Rename the Cargo package from `hnsw-rs` to `bifrost` and the Rust crate path
   from `hnsw_rs` to `bifrost`. The verification skill is now `verify-bifrost`.
+  The default checkout path is `/Users/klogram/dev/klogram_labs/bifrost`.
   `HnswIndex`, `LoadedHnsw`, `.hnsw` snapshots, and the `HNSW` magic are
   unchanged.
 - The node-capacity check accepts the last legal `NodeIndex`
