@@ -16,16 +16,16 @@ and receive dense external IDs starting at zero, then search the resulting index
   public method; ids are `0..vectors.len()` as `u32`).
 - Call `index.search(&query, k)?` on the same index.
 
-## Driving it with verify-hnsw-rs
+## Driving it with verify-bifrost
 
 Preconditions:
 
-- `scripts/verify-hnsw-rs.sh doctor` exited 0.
-- `scripts/verify-hnsw-rs.sh launch --run-id $RUN_ID` compiled tests.
+- `scripts/verify-bifrost.sh doctor` exited 0.
+- `scripts/verify-bifrost.sh launch --run-id $RUN_ID` compiled tests.
 - Input vectors in the mapped test are length-3 slices (so `Config.dim` is `3`).
 
 - **Build then search.** Drive the batch test. Run
-  `scripts/verify-hnsw-rs.sh drive batch-build --run-id $RUN_ID`.
+  `scripts/verify-bifrost.sh drive batch-build --run-id $RUN_ID`.
   The helper runs
   `cargo test --all-features --lib -- --nocapture build_batch_and_search`.
   Exit code `0`. Transcript contains

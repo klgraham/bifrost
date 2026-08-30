@@ -3,8 +3,9 @@
 ## Unreleased
 
 - Rename the Cargo package from `hnsw-rs` to `bifrost` and the Rust crate path
-  from `hnsw_rs` to `bifrost`. `HnswIndex`, `LoadedHnsw`, `.hnsw` snapshots,
-  and the `HNSW` magic are unchanged.
+  from `hnsw_rs` to `bifrost`. The verification skill is now `verify-bifrost`.
+  `HnswIndex`, `LoadedHnsw`, `.hnsw` snapshots, and the `HNSW` magic are
+  unchanged.
 - The node-capacity check accepts the last legal `NodeIndex`
   (`u32::MAX - 1`), so a graph may hold `u32::MAX` nodes. Index `u32::MAX`
   is unused: a count of `2^32` cannot be stored in `Graph::node_count` or
