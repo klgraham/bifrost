@@ -19,8 +19,9 @@ and quantization are **not** supported — do not invent those features.
 Competitor benches under `benchmarks/competitors` and the OpenAI FiQA fixture
 are out of scope (network, paid, extra native deps).
 
-Repo root: `/Users/klogram/dev/klogram_labs/bifrost`. Override with
-`BIFROST_ROOT` if the checkout moved. Read `features/README.md` before driving.
+Repo root is this checkout. Discover it the way the helper does: walk from
+the skill/script to `Cargo.toml`, or set `BIFROST_ROOT`. Read
+`features/README.md` before driving.
 
 Maintenance: keep this map honest with `/maintain-verification-skill`.
 
@@ -111,7 +112,7 @@ enable `fiqa-prep`, do not run `cargo bench` or `benchmarks/competitors`.
 
 Proof artifacts live under the skill directory so cleanup cannot eat them:
 
-`/Users/klogram/dev/klogram_labs/bifrost/.cursor/skills/verify-bifrost/artifacts/<run-id>/`
+`.cursor/skills/verify-bifrost/artifacts/<run-id>/` relative to the checkout.
 
 Per drive, expect at least:
 
