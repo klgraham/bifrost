@@ -1,12 +1,29 @@
 use crate::{Error, Result};
 
+/// Caller-facing identifier stored with each vector.
+///
+/// Chosen by [`crate::HnswIndex::insert`]. [`crate::HnswIndex::build`] assigns
+/// dense values `0..n-1`. IDs stay unique for the life of the index; there is
+/// no delete API that would free one.
 pub type ExternalId = u32;
+
+/// Dense internal node index, assigned in insertion order (`0..n-1`).
+///
+/// Used by [`Graph`] accessors and [`crate::HnswIndex::entry_point`]. Distinct
+/// from [`ExternalId`].
 pub type NodeIndex = u32;
 
+/// Per-node metadata stored in the construction graph and on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeMeta {
+    /// Caller-facing ID for this node.
     pub external_id: ExternalId,
+    /// Highest layer this node occupies. The node has adjacency slots on
+    /// layers `0..=level`.
     pub level: u8,
+    /// Start of the node's vector in the packed `f32` store, as an element
+    /// index (not a byte offset). The on-disk layout uses the same unit:
+    /// multiply by 4 to reach the vector section.
     pub vector_offset: u32,
 }
 
@@ -37,6 +54,7 @@ impl Graph {
 }
 
 impl Graph {
+    /// Empty construction graph: no nodes and no layers.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -101,6 +119,12 @@ impl Graph {
         Ok(())
     }
 
+    /// Outgoing neighbors of `node_index` at `level`.
+    ///
+    /// Empty when the node is missing or `node.level < level`. The slice is
+    /// sorted and unique. Adjacency is directed: reverse-link prune drops an
+    /// outgoing edge on one node and leaves the peer's reverse edge in place,
+    /// so `edges(level, a)` containing `b` does not imply the reverse.
     #[must_use]
     pub fn edges(&self, level: u8, node_index: NodeIndex) -> &[NodeIndex] {
         let Some(node) = self.node(node_index) else {
@@ -244,17 +268,25 @@ impl Graph {
         Self::node_index_from_len(self.node_data.len())
     }
 
+    /// Number of allocated layers (highest assigned node level plus one).
+    ///
+    /// `0` on an empty graph.
     #[must_use]
     pub fn layer_count(&self) -> u8 {
         u8::try_from(self.construction_layers.len())
             .expect("layer count cannot exceed the u8 node level range")
     }
 
+    /// Metadata for a dense internal node, if `node_index` exists.
     #[must_use]
     pub fn node(&self, node_index: NodeIndex) -> Option<NodeMeta> {
         self.node_data.get(node_index as usize).copied()
     }
 
+    /// Whether a directed edge exists from `source` to `destination` at `level`.
+    ///
+    /// This is a membership test on [`Graph::edges`]. A dropped reverse link
+    /// can make the relation one-sided.
     #[must_use]
     pub fn has_edge(&self, level: u8, source: NodeIndex, destination: NodeIndex) -> bool {
         self.edges(level, source)

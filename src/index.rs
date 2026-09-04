@@ -17,7 +17,9 @@ use crate::{
 /// candidate. Hits are sorted nearest-first, then by [`ExternalId`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SearchHit {
+    /// External ID of the hit.
     pub id: ExternalId,
+    /// Cosine distance (`1 - dot`) already computed for this candidate.
     pub distance: f32,
 }
 
@@ -125,6 +127,13 @@ pub(crate) fn hits_from_candidates<G: SearchGraph>(
 }
 
 impl HnswIndex {
+    /// Creates an empty index from a validated [`Config`].
+    ///
+    /// Construction caps (`dim`, `m`, `ef_construction`, `max_level`) stay
+    /// fixed for the life of the index. [`Config::rng_seed`] pins the level
+    /// RNG when set; otherwise the process uses operating-system entropy.
+    /// Returns [`Error::InvalidConfig`] when validation fails. The new index
+    /// has no entry point ([`HnswIndex::entry_point`] is `None`).
     pub fn new(config: Config) -> Result<Self> {
         let config = config.validate()?;
         Ok(Self {
@@ -389,21 +398,30 @@ impl HnswIndex {
         LoadedHnsw::open(path)
     }
 
+    /// Number of inserted vectors.
     #[must_use]
     pub fn len(&self) -> usize {
         self.graph.node_data.len()
     }
 
+    /// `true` when no vectors have been inserted.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.graph.node_data.is_empty()
     }
 
+    /// Internal index of the graph entry point, if the index is non-empty.
+    ///
+    /// `None` on an empty index. The first insert becomes the entry; a later
+    /// insert replaces it only when assigned a strictly higher level.
     #[must_use]
     pub fn entry_point(&self) -> Option<NodeIndex> {
         self.entry_point
     }
 
+    /// Assigned level of [`HnswIndex::entry_point`].
+    ///
+    /// `0` when the index is empty (`entry_point` is `None`).
     #[must_use]
     pub fn entry_level(&self) -> u8 {
         self.entry_level
