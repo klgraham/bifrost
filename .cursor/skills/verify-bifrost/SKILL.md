@@ -9,7 +9,7 @@ description: >-
 
 # Verify Bifrost
 
-This skill drives **Bifrost 0.2.1**, a library crate (`bifrost`) with no web UI,
+This skill drives **Bifrost 0.2.2**, a library crate (`bifrost`) with no web UI,
 CLI, or listening port. The user-facing surface is the public Rust API:
 `Config`, `HnswIndex::{new, insert, search, build, save, len}`, `SearchHit`,
 `load_file` / `LoadedHnsw`, and `bifrost::vector::{dot, cosine_distance,
@@ -38,7 +38,7 @@ export BIFROST_VERIFY_RUN_ID="${BIFROST_VERIFY_RUN_ID:-$(date +%Y%m%dT%H%M%S)-$$
 
 Ready when the helper exits 0 and stdout contains both:
 
-- `ok launch crate=bifrost-index@0.2.1`
+- `ok launch crate=bifrost-index@0.2.2`
 - `Finished \`test\` profile`
 
 Teardown is **Cleanup**, not a daemon kill. Cargo/rustc started by launch
@@ -60,7 +60,7 @@ Require all of:
 
 - `cargo` and `rustc` on `PATH`; `rustc` reports a version `>= 1.87.0`
   (`Cargo.toml` `rust-version = "1.87"`, edition 2024).
-- Manifest package `name = "bifrost-index"`, `version = "0.2.1"`,
+- Manifest package `name = "bifrost-index"`, `version = "0.2.2"`,
   `[lib] name = "bifrost"` so rustc still resolves `use bifrost::...`.
 - `tests/interoperability.rs` and `tests/fixtures/v3.hex` exist.
 - Decoded `v3.hex` is exactly 220 bytes with SHA-256

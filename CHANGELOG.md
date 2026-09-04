@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bump crate version to 0.2.2.
+- Improve public rustdoc for integrators (crate overview, `Error` variants,
+  graph identifiers, `.hnsw` header and mapped views).
 - Raise MSRV to rustc 1.87. AVX2 and NEON init/arithmetic stdarch calls
   are safe there, so the extra `unsafe { }` wrappers and
   `#[allow(unused_unsafe)]` from #48 are gone. Loads and stores stay in

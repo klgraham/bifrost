@@ -9,7 +9,7 @@ the matching feature file as the recipe.
 - Work in the clone / repo root (or `BIFROST_ROOT`).
 - Toolchain: `cargo`/`rustc` ≥ 1.87 (crate `rust-version`). Current checkout
   was last proven on rustc 1.96.x.
-- Run `scripts/verify-bifrost.sh doctor` and require crate `bifrost-index@0.2.1`
+- Run `scripts/verify-bifrost.sh doctor` and require crate `bifrost-index@0.2.2`
   plus the v3 fixture SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`.
 - Run `scripts/verify-bifrost.sh launch --run-id $RUN_ID` so tests are compiled
