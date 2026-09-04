@@ -25,32 +25,63 @@ use crate::{
     vector::cosine_distance_unchecked,
 };
 
+/// Little-endian file magic: `0x484E_5357` (`HNSW`).
 pub const MAGIC: u32 = 0x484e_5357;
+/// Current `.hnsw` snapshot version written by [`save_file`].
 pub const VERSION: u16 = 3;
+/// Older snapshot version that [`load_file`] rewrites to [`VERSION`].
+///
+/// A valid v2 file is migrated in place (temp + rename) before the mapping
+/// is returned. Other versions return [`Error::UnsupportedVersion`].
 pub const MIGRATABLE_VERSION: u16 = 2;
+/// Size of the encoded [`Header`] in bytes.
 pub const HEADER_SIZE: usize = 64;
+/// Size of one encoded [`NodeMeta`] in bytes.
 pub const NODE_META_SIZE: usize = 12;
 
 const CRC_OFFSET: usize = 38;
 
+/// Decoded `.hnsw` file header ([`HEADER_SIZE`] bytes on disk).
+///
+/// Field names match the v3 writer. The first four bytes of
+/// [`Header::reserved`] hold the v3 data-section CRC32; see
+/// [`Header::stored_crc`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Header {
+    /// Must equal [`MAGIC`] for the file to load.
     pub magic: u32,
+    /// Snapshot version. [`VERSION`] after a successful load (v2 is migrated).
     pub version: u16,
+    /// Vector dimensionality ([`Config::dim`]).
     pub dim: u16,
+    /// Number of nodes. Zero means an empty snapshot.
     pub node_count: u32,
+    /// Neighbor parameter `M` ([`Config::m`]).
     pub m: u8,
+    /// Insertion candidate width ([`Config::ef_construction`]).
     pub ef_construction: u16,
+    /// Default query candidate width ([`Config::ef_search`]).
     pub ef_search: u16,
+    /// Highest assignable node level ([`Config::max_level`]).
     pub max_level: u8,
+    /// Random-level stop probability ([`Config::level_mult`]).
     pub level_mult: f64,
+    /// Internal index of the search entry. `0` when [`Header::node_count`] is 0.
     pub entry_point: u32,
+    /// Level of [`Header::entry_point`]. `0` when the snapshot is empty.
     pub entry_level: u8,
+    /// Allocated layer count. `0` when the snapshot is empty.
     pub layer_count: u8,
+    /// Trailing header bytes. The first four are the v3 little-endian CRC32
+    /// of the data section; the rest are written as zero.
     pub reserved: [u8; 24],
 }
 
 impl Header {
+    /// Reconstructs a [`Config`] from the stored construction parameters.
+    ///
+    /// [`Config::rng_seed`] is `None` and [`Config::check_vectors`] is `false`;
+    /// neither is stored in the snapshot.
     #[must_use]
     pub fn config(&self) -> Config {
         Config {
@@ -65,6 +96,10 @@ impl Header {
         }
     }
 
+    /// CRC32 stored in the first four bytes of [`Header::reserved`].
+    ///
+    /// On v3 files this is the hash of every byte after [`HEADER_SIZE`].
+    /// v2 files store zeros here and are migrated before this value is used.
     #[must_use]
     pub fn stored_crc(&self) -> u32 {
         u32::from_le_bytes(self.reserved[..4].try_into().expect("four CRC bytes"))
@@ -113,16 +148,19 @@ impl std::fmt::Debug for LoadedHnsw {
 }
 
 impl LoadedHnsw {
+    /// Decoded file header, including the stored [`Config`] fields.
     #[must_use]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
+    /// Length of the mapped file in bytes.
     #[must_use]
     pub fn file_size(&self) -> usize {
         self.mmap.len()
     }
 
+    /// Metadata for a dense internal node, if `node_index` is in range.
     #[must_use]
     pub fn node(&self, node_index: NodeIndex) -> Option<NodeMeta> {
         if node_index >= self.header.node_count {
@@ -132,6 +170,7 @@ impl LoadedHnsw {
         Some(read_node(&self.mmap[offset..offset + NODE_META_SIZE]))
     }
 
+    /// Mapped vector for `node_index`, if the node exists and the span is valid.
     #[must_use]
     pub fn vector(&self, node_index: NodeIndex) -> Option<VectorView<'_>> {
         let node = self.node(node_index)?;
@@ -196,11 +235,13 @@ impl LoadedHnsw {
         Ok(hits_from_candidates(self, candidates))
     }
 
+    /// Number of nodes in the snapshot.
     #[must_use]
     pub fn len(&self) -> usize {
         self.header.node_count as usize
     }
 
+    /// `true` when the snapshot stores no nodes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.header.node_count == 0
@@ -222,6 +263,10 @@ impl LoadedHnsw {
         crate::vector::validate_input_vector(vector, self.check_vectors)
     }
 
+    /// Outgoing neighbors of `node_index` at `level`.
+    ///
+    /// Empty when the node is missing, `level` is out of range, or the node
+    /// does not occupy that layer. The view is directed; see [`EdgeView`].
     #[must_use]
     pub fn edges(&self, level: u8, node_index: NodeIndex) -> EdgeView<'_> {
         let Some(node) = self.node(node_index) else {
@@ -251,22 +296,28 @@ impl LoadedHnsw {
     }
 }
 
+/// Memory-mapped view of one stored vector (little-endian `f32` elements).
+///
+/// The slice is borrowed from [`LoadedHnsw`]; it is not an owned `Vec<f32>`.
 #[derive(Clone, Copy, Debug)]
 pub struct VectorView<'a> {
     bytes: &'a [u8],
 }
 
 impl VectorView<'_> {
+    /// Number of `f32` coordinates (the snapshot `dim`).
     #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len() / 4
     }
 
+    /// `true` when the view has no bytes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
+    /// Decodes the coordinate at `index`, if it is in range.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<f32> {
         let start = index.checked_mul(4)?;
@@ -275,6 +326,7 @@ impl VectorView<'_> {
         Some(f32::from_bits(u32::from_le_bytes(bytes.try_into().ok()?)))
     }
 
+    /// Iterates decoded little-endian `f32` values in index order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = f32> + '_ {
         self.bytes.chunks_exact(4).map(|bytes| {
             f32::from_bits(u32::from_le_bytes(
@@ -298,22 +350,30 @@ impl VectorView<'_> {
     }
 }
 
+/// Memory-mapped view of one outgoing adjacency list (little-endian [`NodeIndex`]).
+///
+/// Neighbors are sorted and unique, matching the live [`crate::Graph`]. The
+/// list is directed: a missing reverse edge is possible after prune.
 #[derive(Clone, Copy, Debug)]
 pub struct EdgeView<'a> {
     bytes: &'a [u8],
 }
 
 impl<'a> EdgeView<'a> {
+    /// Number of neighbor indices.
     #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len() / 4
     }
 
+    /// `true` when the node has no outgoing edges at this layer, or the
+    /// lookup was out of range.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
+    /// Neighbor at `index` in the sorted list, if in range.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<NodeIndex> {
         let start = index.checked_mul(4)?;
@@ -322,6 +382,7 @@ impl<'a> EdgeView<'a> {
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     }
 
+    /// Iterates neighbor indices in stored (sorted) order.
     pub fn iter(self) -> impl ExactSizeIterator<Item = NodeIndex> + 'a {
         self.bytes
             .chunks_exact(4)
