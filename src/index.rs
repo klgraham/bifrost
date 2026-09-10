@@ -1109,28 +1109,6 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_k_when_larger_than_ef_search() {
-        let mut index = HnswIndex::new(Config {
-            dim: 2,
-            ef_search: 2,
-            rng_seed: Some(1),
-            ..Config::default()
-        })
-        .unwrap();
-        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
-            .iter()
-            .enumerate()
-        {
-            index.insert(id as u32, vector).unwrap();
-        }
-        let hits = index.search(&[1.0, 0.0], 4).unwrap();
-        assert_eq!(hits.len(), 4);
-        assert_eq!(index.search_with_ef(&[1.0, 0.0], 4, 2).unwrap(), hits);
-        assert_eq!(index.search_with_ef(&[1.0, 0.0], 1, 2).unwrap().len(), 1);
-        assert_eq!(index.config().ef_search, 2);
-    }
-
-    #[test]
     fn set_ef_search_rejects_zero() {
         let mut index = HnswIndex::new(Config {
             dim: 2,

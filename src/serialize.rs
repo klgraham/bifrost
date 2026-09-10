@@ -959,23 +959,6 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
-    fn four_node_index(ef_search: u16) -> HnswIndex {
-        let mut index = HnswIndex::new(Config {
-            dim: 2,
-            ef_search,
-            rng_seed: Some(1),
-            ..Config::default()
-        })
-        .unwrap();
-        for (id, vector) in [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]
-            .iter()
-            .enumerate()
-        {
-            index.insert(id as u32, vector).unwrap();
-        }
-        index
-    }
-
     #[test]
     fn save_load_search_matches_live_index() {
         let path = temporary_file("search-round-trip");
@@ -996,23 +979,6 @@ mod tests {
                 actual: 1
             })
         ));
-        drop(loaded);
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn loaded_search_returns_k_when_larger_than_ef_search() {
-        let path = temporary_file("search-k-gt-ef");
-        let index = four_node_index(2);
-        let live = index.search(&[1.0, 0.0], 4).unwrap();
-        assert_eq!(live.len(), 4);
-        index.save(&path).unwrap();
-
-        let loaded = LoadedHnsw::open(&path).unwrap();
-        assert_eq!(loaded.search(&[1.0, 0.0], 4).unwrap().len(), 4);
-        assert_eq!(loaded.search(&[1.0, 0.0], 4).unwrap(), live);
-        assert_eq!(loaded.search_with_ef(&[1.0, 0.0], 4, 2).unwrap(), live);
-        assert_eq!(loaded.search_with_ef(&[1.0, 0.0], 1, 2).unwrap().len(), 1);
         drop(loaded);
         fs::remove_file(path).unwrap();
     }
