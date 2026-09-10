@@ -30,7 +30,7 @@ Preconditions:
   `cargo test --all-features --lib -- --nocapture build_batch_and_search`.
   Exit code `0`. Transcript contains
   `test index::tests::build_batch_and_search ... ok`
-  (four vectors; `search([0.9, 0.9, 0.0], 2)` returns length `2`).
+  (four vectors; `search([FRAC_1_SQRT_2, FRAC_1_SQRT_2, 0.0], 2)` returns length `2`).
 - **Proof.** Artifacts
   `artifacts/$RUN_ID/batch-build/cargo-test.txt` and
   `artifacts/$RUN_ID/batch-build/meta.json` with `exit_code` `0` and
@@ -43,7 +43,4 @@ Preconditions:
   not cover partial failure.
 - Dense IDs start at zero. Do not combine `build` with earlier `insert(0, …)`
   in the same index — that is a duplicate-id error (`api-errors`).
-- The fourth example vector `[1.0, 1.0, 0.0]` is **not** unit-normalized.
-  The test only asserts result length, not ranking; do not tighten this proof
-  to cosine order without normalizing first.
 - `build` is not persistence. Saving the built index is `persist-v3`.

@@ -930,7 +930,7 @@ mod tests {
         #[cfg(not(miri))]
         {
             let path = std::env::temp_dir().join(format!(
-                "hnsw-rs-hub-degree-{}-{}.hnsw",
+                "bifrost-hub-degree-{}-{}.hnsw",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

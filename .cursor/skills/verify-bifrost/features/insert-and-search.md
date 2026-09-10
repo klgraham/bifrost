@@ -17,7 +17,7 @@ external IDs and retrieve at most `k` nearest neighbors by cosine distance
 - Construct `HnswIndex::new(Config { dim, rng_seed: Some(seed), ..Config::default() })?`.
 - Call `index.insert(id, &vector)?` then `index.search(&query, k)?`.
 - Follow the README usage example (`dim: 4`, ids `100` and `5_000`, query
-  `[0.98, 0.02, 0.0, 0.0]` expecting nearest id `100`).
+  `[0.9998, 0.02, 0.0, 0.0]` expecting nearest id `100`).
 
 ## Driving it with verify-bifrost
 
@@ -49,8 +49,8 @@ Preconditions:
 
 ## Gotchas
 
-- Vectors must already be unit-normalized. The index will store whatever slice
-  it is given; unnormalized inputs silently skew cosine distance.
+- Vectors must already be unit-normalized. Unnormalized inputs are
+  `debug_assert`ed; `Config::check_vectors` returns `Error::InvalidVector`.
 - `insert`/`search` return `Error::DimensionMismatch` instead of panicking when
   the slice length differs from `Config::dim` — that is a different feature
   (`api-errors`).

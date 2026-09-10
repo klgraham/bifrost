@@ -1,8 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 - 2026-09-10
 
-- Bump crate version to 0.2.2.
 - Improve public rustdoc for integrators (crate overview, `Error` variants,
   graph identifiers, `.hnsw` header and mapped views).
 - Raise MSRV to rustc 1.87. AVX2 and NEON init/arithmetic stdarch calls
@@ -26,14 +25,10 @@
   bypassed. `insert_node` returns `Error::CapacityExceeded` at that length,
   and the public count saturates at `u32::MAX`.
 - CI clippy-checks and unit-tests the competitor crate (no FiQA download) and
-  runs library tests on Windows as well as Ubuntu and macOS. The competitor
-  `Config` init uses `..Config::default()` so new fields such as
-  `check_vectors` do not break the bench. Integration-test temp paths use a
-  numeric nonce so Windows does not treat `SystemTime`'s Debug form as an
-  invalid path.
-- Drop the `documentation` crate metadata URL. It pointed at docs.rs/hnsw-rs,
-  which is not this unpublished crate (`publish = false`); crates.io `hnsw_rs`
-  is a different project.
+  runs library tests on Ubuntu and macOS. The competitor `Config` init uses
+  `..Config::default()` so new fields such as `check_vectors` do not break the
+  bench. Integration-test temp paths use a numeric nonce so Windows does not
+  treat `SystemTime`'s Debug form as an invalid path.
 - Search hits copy the already-computed candidate distance instead of launching
   another cosine kernel. Live and mmap search share `hits_from_candidates`;
   equal distances still sort by external id.

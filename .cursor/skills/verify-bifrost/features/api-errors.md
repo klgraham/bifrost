@@ -44,9 +44,6 @@ Preconditions:
 
 ## Gotchas
 
-- `vector::dot` and `cosine_similarity` still `assert_eq!` on length. Those
-  asserts are not this feature; only `HnswIndex::insert`/`search` and
-  `Config::validate` are in scope.
 - Sparse IDs are allowed; only **duplicate** IDs error. A gap between `100` and
   `5_000` is success.
 - `InvalidConfig` messages are `&'static str`. Assert on the `Error` variant,

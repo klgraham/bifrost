@@ -8,7 +8,7 @@ use bifrost::{Config, Error, HnswIndex, LoadedHnsw};
 
 fn temporary_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "hnsw-rs-search-{label}-{}-{}.hnsw",
+        "bifrost-search-{label}-{}-{}.hnsw",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
