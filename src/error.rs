@@ -69,8 +69,8 @@ pub enum Error {
     /// The path is not a Bifrost `.hnsw` snapshot, or it is corrupt before the
     /// magic. Open a file written by [`crate::HnswIndex::save`].
     InvalidMagic,
-    /// The snapshot version is neither [`crate::VERSION`] nor
-    /// [`crate::MIGRATABLE_VERSION`].
+    /// The snapshot version is neither [`crate::VERSION`] nor the
+    /// migratable predecessor (2).
     ///
     /// `expected` is the current writer version. `actual` is the file's
     /// version. Valid v2 files are rewritten to v3 on load; other versions
@@ -80,7 +80,7 @@ pub enum Error {
     /// The v3 data-section CRC32 does not match [`crate::Header::stored_crc`].
     ///
     /// `expected` is the header value; `actual` is the hash of bytes after
-    /// [`crate::HEADER_SIZE`]. The file was truncated or overwritten in place.
+    /// the 64-byte header. The file was truncated or overwritten in place.
     /// Restore a good snapshot; do not search this mapping.
     CrcMismatch { expected: u32, actual: u32 },
     /// The snapshot failed layout or writer-invariant checks after a valid

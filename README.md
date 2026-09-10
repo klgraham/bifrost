@@ -88,8 +88,8 @@ same failures. The flag is not stored in `.hnsw` snapshots. Call
 
 ## Persistence
 
-`HnswIndex::save` writes a version-3 `.hnsw` snapshot. `load_file`,
-`LoadedHnsw::open`, and `HnswIndex::load` memory-map that file for query-only
+`HnswIndex::save` writes a version-3 `.hnsw` snapshot. `load_file` and
+`LoadedHnsw::open` memory-map that file for query-only
 search. They do not rebuild a mutable `HnswIndex`. Further inserts still need a
 live builder.
 

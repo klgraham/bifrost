@@ -6,7 +6,7 @@ byte-for-byte stable.
 
 ## Sub-features
 
-- `persist-save` writes a v3 file via `HnswIndex::save` / `save_file`.
+- `persist-save` writes a v3 file via `HnswIndex::save`.
 - `persist-load-golden` loads `tests/fixtures/v3.hex` through `load_file` and
   reads header, nodes, and vectors.
 - `persist-writer-golden` requires the writer to reproduce all 220 fixture bytes.

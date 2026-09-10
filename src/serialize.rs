@@ -27,21 +27,21 @@ use crate::{
 
 /// Little-endian file magic: `0x484E_5357` (`HNSW`).
 pub const MAGIC: u32 = 0x484e_5357;
-/// Current `.hnsw` snapshot version written by [`save_file`].
+/// Current `.hnsw` snapshot version written by [`crate::HnswIndex::save`].
 pub const VERSION: u16 = 3;
 /// Older snapshot version that [`load_file`] rewrites to [`VERSION`].
 ///
 /// A valid v2 file is migrated in place (temp + rename) before the mapping
 /// is returned. Other versions return [`Error::UnsupportedVersion`].
-pub const MIGRATABLE_VERSION: u16 = 2;
+pub(crate) const MIGRATABLE_VERSION: u16 = 2;
 /// Size of the encoded [`Header`] in bytes.
-pub const HEADER_SIZE: usize = 64;
+pub(crate) const HEADER_SIZE: usize = 64;
 /// Size of one encoded [`NodeMeta`] in bytes.
-pub const NODE_META_SIZE: usize = 12;
+pub(crate) const NODE_META_SIZE: usize = 12;
 
 const CRC_OFFSET: usize = 38;
 
-/// Decoded `.hnsw` file header ([`HEADER_SIZE`] bytes on disk).
+/// Decoded `.hnsw` file header (64 bytes on disk).
 ///
 /// Field names match the v3 writer. The first four bytes of
 /// [`Header::reserved`] hold the v3 data-section CRC32; see
@@ -98,7 +98,7 @@ impl Header {
 
     /// CRC32 stored in the first four bytes of [`Header::reserved`].
     ///
-    /// On v3 files this is the hash of every byte after [`HEADER_SIZE`].
+    /// On v3 files this is the hash of every byte after the 64-byte header.
     /// v2 files store zeros here and are migrated before this value is used.
     #[must_use]
     pub fn stored_crc(&self) -> u32 {
@@ -124,7 +124,7 @@ struct Sections {
 /// The snapshot is opened read-only. Do not truncate, overwrite in place, or
 /// otherwise mutate the mapped file (or its inode) while this value lives:
 /// a shared `[u8]` mapping is unsound if those bytes change. This crate's
-/// [`save_file`] and v2→v3 migration write a sibling temporary file and
+/// [`crate::HnswIndex::save`] and v2→v3 migration write a sibling temporary file and
 /// `rename` it over the destination, so an existing mapping stays attached
 /// to the previous inode. A shared read mapping is used instead of
 /// `map_copy` because `MAP_PRIVATE` still has unspecified visibility of
@@ -152,12 +152,6 @@ impl LoadedHnsw {
     #[must_use]
     pub fn header(&self) -> &Header {
         &self.header
-    }
-
-    /// Length of the mapped file in bytes.
-    #[must_use]
-    pub fn file_size(&self) -> usize {
-        self.mmap.len()
     }
 
     /// Metadata for a dense internal node, if `node_index` is in range.
@@ -429,7 +423,7 @@ impl SearchVectors for MappedVectors<'_> {
 /// atomically [`rename`](fs::rename)d over `path`. A crash during the write
 /// cannot replace a previous good file with a truncated one. This is the
 /// same replace path used by v2→v3 migration.
-pub fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
+pub(crate) fn save_file(index: &HnswIndex, path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     let config = index.config();
     config.validate()?;
@@ -967,7 +961,7 @@ mod tests {
         let live = index.search(&query, 3).unwrap();
         index.save(&path).unwrap();
 
-        let loaded = HnswIndex::load(&path).unwrap();
+        let loaded = LoadedHnsw::open(&path).unwrap();
         assert_eq!(loaded.len(), 3);
         assert_eq!(loaded.search(&query, 3).unwrap(), live);
         assert_eq!(loaded.search(&query, 1).unwrap(), live[..1]);
@@ -1231,7 +1225,7 @@ mod tests {
         refresh_crc(&mut bytes);
         fs::write(&path, bytes).unwrap();
         assert!(matches!(
-            HnswIndex::load(&path),
+            load_file(&path),
             Err(Error::InvalidFile("duplicate external id"))
         ));
         fs::remove_file(path).unwrap();
