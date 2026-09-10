@@ -18,7 +18,7 @@ fn run(name: &str, iterations: usize, mut operation: impl FnMut()) {
 }
 
 fn main() {
-    let iterations = std::env::var("HNSW_BENCH_ITERATIONS")
+    let iterations = std::env::var("BIFROST_BENCH_ITERATIONS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(1_000_000);

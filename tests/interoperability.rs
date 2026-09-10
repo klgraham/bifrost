@@ -25,7 +25,7 @@ fn v3_fixture() -> Vec<u8> {
 
 fn temporary_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "hnsw-rs-interop-{label}-{}-{}.hnsw",
+        "bifrost-interop-{label}-{}-{}.hnsw",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

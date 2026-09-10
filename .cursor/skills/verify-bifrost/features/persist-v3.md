@@ -59,5 +59,5 @@ Preconditions:
 - `rng_seed` is not stored in the header (`Header::config` sets `rng_seed: None`).
   Do not expect a loaded file to reconstruct the original RNG.
 - Isolation: tests name files
-  `hnsw-rs-interop-<label>-<pid>-<time>.hnsw` under `temp_dir()`. A shared
+  `bifrost-interop-<label>-<pid>-<time>.hnsw` under `temp_dir()`. A shared
   `/tmp` is not proof isolation — launch must set `TMPDIR` to the run scratch.

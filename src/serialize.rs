@@ -889,7 +889,7 @@ mod tests {
 
     fn temporary_file(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "hnsw-rs-{name}-{}-{}.hnsw",
+            "bifrost-{name}-{}-{}.hnsw",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

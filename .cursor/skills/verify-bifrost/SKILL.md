@@ -100,7 +100,7 @@ let mut index = HnswIndex::new(Config {
     ..Config::default()
 })?;
 index.insert(100, &[1.0, 0.0, 0.0, 0.0])?;
-let hits = index.search(&[0.98, 0.02, 0.0, 0.0], 10)?;
+let hits = index.search(&[0.9998, 0.02, 0.0, 0.0], 10)?;
 index.save(&path)?;
 let loaded = load_file(&path)?;
 ```
