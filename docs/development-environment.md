@@ -1,6 +1,6 @@
 # Bifrost development environment
 
-The environment uses Rust 1.96.1 from `rust-toolchain.toml` and the two checked-in
+The environment uses Rust 1.87.0 from `rust-toolchain.toml` and the two checked-in
 Cargo lockfiles. The library's minimum supported Rust version remains 1.87.
 The competitor crate includes USearch's native C/C++ backend. On Linux,
 `scripts/cargo.sh` selects GCC for compilation and linking, matching CI.
@@ -113,4 +113,3 @@ without embeddings. Embedding generation needs `OPENAI_API_KEY` and network
 access. Cloud secrets are available only during setup, so they are not available
 to an ordinary agent-phase preparation command. Reusing an existing fixture
 allows offline benchmark execution.
-
