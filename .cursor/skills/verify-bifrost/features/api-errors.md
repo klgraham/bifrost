@@ -23,7 +23,7 @@ Preconditions:
 
 - `scripts/verify-bifrost.sh doctor` exited 0.
 - `scripts/verify-bifrost.sh launch --run-id $RUN_ID` compiled tests.
-- No extra env vars. Do not pass `--features fiqa-prep`.
+- No extra environment variables or features are required.
 
 - **Dimension mismatch.** Drive the error tests. Run
   `scripts/verify-bifrost.sh drive api-errors --run-id $RUN_ID`.

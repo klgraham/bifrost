@@ -1,0 +1,29 @@
+{
+  "schema": "bifrost-benchmark-catalog-v1",
+  "artifacts": [
+    {
+      "id": "fiqa-text-embedding-3-small-384",
+      "dataset": "BEIR FiQA-2018",
+      "model": "text-embedding-3-small",
+      "dimensions": 384,
+      "publication": {
+        "state": "planned",
+        "repository": "klgraham/bifrost-benchmark-fixtures",
+        "prefix": "fixtures/fiqa-text-embedding-3-small/384/{manifest_sha256}",
+        "blocked_by": "Review FiQA licensing and provenance, repository visibility, generated checksums, OpenAI cost, and external Hugging Face publication before publishing."
+      }
+    },
+    {
+      "id": "fiqa-text-embedding-3-small-1536",
+      "dataset": "BEIR FiQA-2018",
+      "model": "text-embedding-3-small",
+      "dimensions": 1536,
+      "publication": {
+        "state": "planned",
+        "repository": "klgraham/bifrost-benchmark-fixtures",
+        "prefix": "fixtures/fiqa-text-embedding-3-small/1536/{manifest_sha256}",
+        "blocked_by": "Review FiQA licensing and provenance, repository visibility, generated checksums, OpenAI cost, and external Hugging Face publication before publishing."
+      }
+    }
+  ]
+}

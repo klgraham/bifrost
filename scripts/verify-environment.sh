@@ -5,8 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 bash scripts/cargo.sh fmt --check
 bash scripts/cargo.sh clippy --offline --locked --all-targets --all-features -- -D warnings
 bash scripts/cargo.sh test --offline --locked --all-features
-bash scripts/cargo.sh clippy --offline --locked --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
-bash scripts/cargo.sh test --offline --locked --manifest-path benchmarks/competitors/Cargo.toml --all-features
+bash scripts/verify-benchmark-artifacts.sh
 BIFROST_BENCH_ITERATIONS=10000 bash scripts/cargo.sh bench --offline --locked --bench distance
 # Ignore fixture/size overrides so this remains a bounded synthetic smoke run.
 unset HNSW_BENCH_FIXTURE HNSW_BENCH_EF_SEARCHES

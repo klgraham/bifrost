@@ -23,16 +23,31 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-features
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-features
 
-  # Isolated crate: clippy + unit tests only. Default features omit fiqa-prep, so
-  # nothing downloads BEIR FiQA. USearch 2.26 compiles a C++17 cxx backend plus
-  # NumKong C SIMD kernels (no CMake). Force gcc/g++ as compiler and linker:
+  # Isolated crates: contract and artifact-tool tests use fakes, so no fixture
+  # download, paid embedding request, or publication occurs in CI.
+  benchmark-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check --manifest-path benchmarks/fixture/Cargo.toml
+      - run: cargo clippy --locked --manifest-path benchmarks/fixture/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path benchmarks/fixture/Cargo.toml
+      - run: cargo fmt --check --manifest-path benchmarks/artifacts/Cargo.toml
+      - run: cargo clippy --locked --manifest-path benchmarks/artifacts/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path benchmarks/artifacts/Cargo.toml
+
+  # USearch 2.26 compiles a C++17 cxx backend plus NumKong C SIMD kernels (no
+  # CMake). Force gcc/g++ as compiler and linker:
   # some clang 18 frontends crash on NumKong's dispatch_other.c, and rust-lld
   # invoked via clang-as-cc cannot find libstdc++.
   competitors:
@@ -43,10 +58,11 @@ jobs:
       RUSTFLAGS: "-C linker=gcc"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.89.0
         with:
-          components: clippy
+          components: rustfmt, clippy
       - name: Install GCC for USearch / NumKong
         run: sudo apt-get update && sudo apt-get install -y gcc g++
-      - run: cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
-      - run: cargo test --manifest-path benchmarks/competitors/Cargo.toml
+      - run: cargo fmt --check --manifest-path benchmarks/competitors/Cargo.toml
+      - run: cargo clippy --locked --manifest-path benchmarks/competitors/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path benchmarks/competitors/Cargo.toml

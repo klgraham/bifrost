@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Project-local harness for verifying the Bifrost public Rust API via cargo test.
+# Project-local harness for Bifrost's public API and offline benchmark contracts.
 # Invocation is documented in ../SKILL.md.
 set -euo pipefail
 
@@ -8,13 +8,15 @@ SKILL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="${BIFROST_ROOT:-$(cd "${SKILL_DIR}/../../.." && pwd)}"
 MANIFEST="${REPO_ROOT}/Cargo.toml"
 FIXTURE_HEX="${REPO_ROOT}/tests/fixtures/v3.hex"
+BENCHMARK_VERIFY="${REPO_ROOT}/scripts/verify-benchmark-artifacts.sh"
+BENCHMARK_CATALOG="${REPO_ROOT}/benchmarks/artifacts/catalog.json"
 ARTIFACTS_ROOT="${SKILL_DIR}/artifacts"
 EXPECTED_SHA="70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca"
 EXPECTED_BYTES="220"
 EXPECTED_NAME="bifrost-index"
 EXPECTED_LIB_NAME="bifrost"
 EXPECTED_VERSION="0.2.2"
-EXPECTED_RUST_VERSION="1.87"
+EXPECTED_RUST_VERSION="1.89"
 
 usage() {
   cat <<'USAGE'
@@ -23,7 +25,7 @@ verify-bifrost.sh <command> [args]
 Commands:
   doctor                      Read-only toolchain, crate, and v3 fixture check
   launch [--run-id ID]        Compile tests; isolate TMPDIR for .hnsw files
-  drive FEATURE [--run-id ID] Run one mapped feature via cargo test
+  drive FEATURE [--run-id ID] Run one mapped verification recipe
   cleanup [--run-id ID]       Remove scratch (never artifacts); kill recorded PID only
 
 Features:
@@ -31,6 +33,7 @@ Features:
   persist-v3
   api-errors
   batch-build
+  benchmark-artifacts
 
 Environment:
   BIFROST_ROOT            Override repo root
@@ -91,8 +94,36 @@ require_repo() {
   grep -q '^name = "bifrost-index"$' "${MANIFEST}" || die "${MANIFEST} is not crate bifrost-index"
 }
 
+require_benchmark_contract() {
+  [[ -x "${BENCHMARK_VERIFY}" ]] || die "benchmark verifier is missing or not executable: ${BENCHMARK_VERIFY}"
+  [[ -f "${BENCHMARK_CATALOG}" ]] || die "benchmark catalog is missing: ${BENCHMARK_CATALOG}"
+
+  local manifest expected_name
+  while IFS='|' read -r manifest expected_name; do
+    [[ -f "${manifest}" ]] || die "benchmark manifest is missing: ${manifest}"
+    grep -q "^name = \"${expected_name}\"$" "${manifest}" \
+      || die "${manifest} is not package ${expected_name}"
+    grep -q "^rust-version = \"${EXPECTED_RUST_VERSION}\"$" "${manifest}" \
+      || die "${manifest} rust-version is not ${EXPECTED_RUST_VERSION}"
+  done <<CONTRACTS
+${REPO_ROOT}/benchmarks/fixture/Cargo.toml|bifrost-benchmark-fixture
+${REPO_ROOT}/benchmarks/artifacts/Cargo.toml|bifrost-benchmark-artifacts
+${REPO_ROOT}/benchmarks/competitors/Cargo.toml|bifrost-competitor-benchmarks
+CONTRACTS
+}
+
+require_feature() {
+  case "$1" in
+    insert-and-search|persist-v3|api-errors|batch-build|benchmark-artifacts) ;;
+    *)
+      die "unknown feature '$1'. mapped: insert-and-search persist-v3 api-errors batch-build benchmark-artifacts"
+      ;;
+  esac
+}
+
 cmd_doctor() {
   require_repo
+  require_benchmark_contract
   command -v cargo >/dev/null || die "cargo not on PATH"
   command -v rustc >/dev/null || die "rustc not on PATH"
   command -v python3 >/dev/null || die "python3 not on PATH"
@@ -171,6 +202,7 @@ PY
   echo "ok rustc=${rustc_v}"
   echo "ok manifest=${MANIFEST}"
   echo "ok fixture=${FIXTURE_HEX}"
+  echo "ok benchmark_contract=${BENCHMARK_CATALOG} verifier=${BENCHMARK_VERIFY}"
 }
 
 write_run_state() {
@@ -184,16 +216,24 @@ SKILL_DIR=${SKILL_DIR}
 STATE
 }
 
-run_cargo_isolated() {
-  local scratch="$1" out="$2"
-  shift 2
+run_isolated() {
+  local scratch="$1" out="$2" safety_policy="$3"
+  shift 3
   mkdir -p "${scratch}" "$(dirname "${out}")"
-  # Isolate .hnsw writers. Do not inherit a caller TMPDIR that points at the repo.
+  # Isolate fixture/index writers. Do not inherit a TMPDIR that points at the repo.
   local pid_file="${scratch}/cargo.pid"
   set +e
   (
     export TMPDIR="${scratch}"
     export CARGO_TERM_COLOR=never
+    if [[ "${safety_policy}" == "benchmark-artifacts" ]]; then
+      unset OPENAI_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN
+      unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+      unset http_proxy https_proxy all_proxy no_proxy
+      echo "ok safety external_credentials=unset proxy_environment=unset test_entrypoints_only=true"
+    elif [[ "${safety_policy}" != "standard" ]]; then
+      die "unknown safety policy ${safety_policy}"
+    fi
     exec "$@"
   ) >"${out}" 2>&1 &
   local pid=$!
@@ -224,7 +264,7 @@ cmd_launch() {
   echo "run_id=${RUN_ID}" >"${launch_out}"
   echo "scratch=${scratch}" >>"${launch_out}"
   echo "command=cargo test --manifest-path ${MANIFEST} --all-features --no-run" >>"${launch_out}"
-  if ! run_cargo_isolated "${scratch}" "${run_dir}/launch.cargo.txt" \
+  if ! run_isolated "${scratch}" "${run_dir}/launch.cargo.txt" standard \
     cargo test --manifest-path "${MANIFEST}" --all-features --no-run; then
     cat "${run_dir}/launch.cargo.txt" >>"${launch_out}"
     cat "${run_dir}/launch.cargo.txt" >&2
@@ -253,8 +293,11 @@ feature_cargo_steps() {
     batch-build)
       printf '%s\n' "cargo test --manifest-path ${MANIFEST} --all-features --lib -- --nocapture build_batch_and_search"
       ;;
+    benchmark-artifacts)
+      printf '%s\n' "bash ${BENCHMARK_VERIFY}"
+      ;;
     *)
-      die "unknown feature '${feature}'. mapped: insert-and-search persist-v3 api-errors batch-build"
+      die "unknown feature '${feature}'. mapped: insert-and-search persist-v3 api-errors batch-build benchmark-artifacts"
       ;;
   esac
 }
@@ -265,6 +308,10 @@ cmd_drive() {
   shift
   parse_run_id "$@"
   require_repo
+  require_feature "${feature}"
+  if [[ "${feature}" == "benchmark-artifacts" ]]; then
+    require_benchmark_contract
+  fi
   local run_dir scratch feature_dir
   run_dir="$(run_dir_for "${RUN_ID}")"
   scratch="$(scratch_dir_for "${RUN_ID}")"
@@ -274,9 +321,25 @@ cmd_drive() {
   mkdir -p "${feature_dir}"
 
   local transcript="${feature_dir}/cargo-test.txt"
+  local metadata="${feature_dir}/meta.json"
+  if [[ -e "${transcript}" || -e "${metadata}" ]]; then
+    local attempt=1
+    while [[ -e "${feature_dir}/cargo-test-attempt-${attempt}.txt" \
+      || -e "${feature_dir}/meta-attempt-${attempt}.json" ]]; do
+      attempt=$((attempt + 1))
+    done
+    [[ ! -e "${transcript}" ]] \
+      || mv "${transcript}" "${feature_dir}/cargo-test-attempt-${attempt}.txt"
+    [[ ! -e "${metadata}" ]] \
+      || mv "${metadata}" "${feature_dir}/meta-attempt-${attempt}.json"
+  fi
   : >"${transcript}"
   local failed=0
   local step_idx=0
+  local safety_policy="standard"
+  if [[ "${feature}" == "benchmark-artifacts" ]]; then
+    safety_policy="benchmark-artifacts"
+  fi
   while IFS= read -r spec; do
     step_idx=$((step_idx + 1))
     # shellcheck disable=SC2206
@@ -287,9 +350,10 @@ cmd_drive() {
       echo "===== step ${step_idx} ====="
       echo "command=${spec}"
       echo "TMPDIR=${scratch}"
+      echo "safety_policy=${safety_policy}"
     } >>"${transcript}"
     local step_out="${feature_dir}/step-${step_idx}.txt"
-    if run_cargo_isolated "${scratch}" "${step_out}" "${args[@]}"; then
+    if run_isolated "${scratch}" "${step_out}" "${safety_policy}" "${args[@]}"; then
       cat "${step_out}" >>"${transcript}"
       echo "===== step ${step_idx} exit=0 =====" >>"${transcript}"
     else
@@ -303,10 +367,10 @@ cmd_drive() {
   local rustc_v cargo_v
   rustc_v="$(rustc --version)"
   cargo_v="$(cargo --version)"
-  python3 - "${feature_dir}/meta.json" "${feature}" "${RUN_ID}" "${failed}" \
-    "${scratch}" "${rustc_v}" "${cargo_v}" "${REPO_ROOT}" <<'PY'
+  python3 - "${metadata}" "${feature}" "${RUN_ID}" "${failed}" \
+    "${scratch}" "${rustc_v}" "${cargo_v}" "${REPO_ROOT}" "${safety_policy}" <<'PY'
 import json, sys, datetime
-path, feature, run_id, exit_code, scratch, rustc, cargo, repo = sys.argv[1:]
+path, feature, run_id, exit_code, scratch, rustc, cargo, repo, safety_policy = sys.argv[1:]
 json.dump(
     {
         "feature_id": feature,
@@ -316,6 +380,7 @@ json.dump(
         "repo_root": repo,
         "rustc": rustc,
         "cargo": cargo,
+        "safety_policy": safety_policy,
         "captured_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "harness": "verify-bifrost.sh",
     },
@@ -351,6 +416,16 @@ kill_recorded_pid() {
   rm -f "${pid_file}"
 }
 
+make_scratch_removable() {
+  local scratch="$1"
+  # Fixture/cache tests deliberately leave verified trees read-only. Restore
+  # owner permissions inside the isolated scratch only; find -P never follows
+  # the adversarial symlinks exercised by those tests.
+  chmod u+rwx "${scratch}"
+  find -P "${scratch}" -type d -exec chmod u+rwx {} \;
+  find -P "${scratch}" -type f -exec chmod u+rw {} +
+}
+
 cmd_cleanup() {
   parse_run_id "$@"
   local run_dir scratch
@@ -365,6 +440,7 @@ cmd_cleanup() {
   if [[ -n "${scratch}" ]]; then
     kill_recorded_pid "${scratch}/cargo.pid"
     if [[ -d "${scratch}" ]]; then
+      make_scratch_removable "${scratch}"
       rm -rf "${scratch}"
       echo "ok cleanup removed scratch=${scratch}"
     else
