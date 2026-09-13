@@ -160,7 +160,9 @@ cargo test --all-features
 ```
 
 CI also runs `cargo fmt --check` and
-`cargo clippy --all-targets --all-features -- -D warnings` on Ubuntu and macOS.
+`cargo clippy --lib --tests --all-features -- -D warnings` on Ubuntu and macOS.
+Benchmark targets and benchmark support crates run only through the local
+verification commands documented above.
 
 ## License
 

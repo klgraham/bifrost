@@ -3,7 +3,8 @@
 The environment uses Rust 1.89.0 from `rust-toolchain.toml` and the checked-in
 Cargo lockfiles. The library's minimum supported Rust version is 1.89.
 The competitor crate includes USearch's native C/C++ backend. On Linux,
-`scripts/cargo.sh` selects GCC for compilation and linking, matching CI.
+`scripts/cargo.sh` selects GCC for compilation and linking. CI does not build or
+run benchmark targets or benchmark support crates.
 
 ## Local setup
 
