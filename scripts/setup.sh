@@ -31,11 +31,20 @@ toolchain="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
 [[ -n "$toolchain" ]] || { echo 'Missing Rust toolchain pin' >&2; exit 1; }
 rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
 
-# Fetch includes optional dependencies, allowing fiqa-prep to compile offline.
+# Populate every checked-in Cargo graph while setup has network access. Runtime
+# artifact fetch, preparation, and publication are deliberately not run here.
 bash scripts/cargo.sh fetch --locked
+bash scripts/cargo.sh fetch --locked --manifest-path benchmarks/fixture/Cargo.toml
 bash scripts/cargo.sh fetch --locked --manifest-path benchmarks/competitors/Cargo.toml
+bash scripts/cargo.sh fetch --locked --manifest-path benchmarks/artifacts/Cargo.toml
 bash scripts/cargo.sh test --locked --all-features --no-run
 bash scripts/cargo.sh build --locked --release --benches
+bash scripts/cargo.sh test --locked --no-run --manifest-path benchmarks/fixture/Cargo.toml
 bash scripts/cargo.sh build --locked --release --manifest-path benchmarks/competitors/Cargo.toml
-bash scripts/cargo.sh build --locked --release --all-features --manifest-path benchmarks/competitors/Cargo.toml
+bash scripts/cargo.sh test --locked --no-run --manifest-path benchmarks/artifacts/Cargo.toml
+bash scripts/cargo.sh build --locked --release --manifest-path benchmarks/artifacts/Cargo.toml
+if [[ -n "${BIFROST_BENCH_ARTIFACT:-}" ]]; then
+  fixture_path="$(bash scripts/prefetch-benchmark-artifact.sh "$BIFROST_BENCH_ARTIFACT")"
+  echo "Prefetched $BIFROST_BENCH_ARTIFACT to $fixture_path"
+fi
 echo 'Bifrost setup complete. Run: bash scripts/verify-environment.sh'

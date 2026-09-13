@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Raise the repository MSRV and pinned toolchain to Rust 1.89. Add a checked-in
+  benchmark artifact catalog, verified fixture schema, and isolated Rust tool
+  for resumable FiQA preparation plus immutable Hugging Face fetch and publish
+  workflows. The benchmark executable consumes verified cached fixtures and
+  writes indexes only to a separate output directory; it never calls OpenAI or
+  Hugging Face.
 - Narrow the crate-root persistence surface (0.x break). `mod serialize` is
   private. Stop re-exporting `save_file`, `HnswIndex::load`, `HEADER_SIZE`,
   `NODE_META_SIZE`, and `MIGRATABLE_VERSION`. Persist with `HnswIndex::save`;

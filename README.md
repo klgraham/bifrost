@@ -34,7 +34,7 @@ instead:
 bifrost-index = { git = "https://github.com/klgraham/bifrost" }
 ```
 
-Rust 1.87 or newer.
+Rust 1.89 or newer.
 
 ## Usage
 
@@ -150,13 +150,19 @@ are not supported.
 
 For local and Codex cloud setup, including both benchmark crates, see
 [Bifrost development environment](docs/development-environment.md).
+The checked-in [benchmark artifact catalog](benchmarks/artifacts/catalog.json)
+and [artifact design](docs/benchmark-artifact-design.md) describe the
+versioned FiQA fixture workflow and planned matrix for reproducible offline
+competitor runs.
 
 ```bash
 cargo test --all-features
 ```
 
 CI also runs `cargo fmt --check` and
-`cargo clippy --all-targets --all-features -- -D warnings` on Ubuntu and macOS.
+`cargo clippy --lib --tests --all-features -- -D warnings` on Ubuntu and macOS.
+Benchmark targets and benchmark support crates run only through the local
+verification commands documented above.
 
 ## License
 

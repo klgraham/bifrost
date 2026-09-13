@@ -7,22 +7,24 @@ the matching feature file as the recipe.
 ## Baseline preconditions
 
 - Work in the clone / repo root (or `BIFROST_ROOT`).
-- Toolchain: `cargo`/`rustc` ≥ 1.87 (crate `rust-version`). Current checkout
-  was last proven on rustc 1.96.x.
+- Toolchain: `cargo`/`rustc` ≥ 1.89 (root and benchmark crate
+  `rust-version`). Current checkout is pinned to rustc 1.89.0.
 - Run `scripts/verify-bifrost.sh doctor` and require crate `bifrost-index@0.2.2`
   plus the v3 fixture SHA-256
   `70feb12b392eb223c79db095aabb0500b64ba7f1ddf1a2f6030d29aa499466ca`.
 - Run `scripts/verify-bifrost.sh launch --run-id $RUN_ID` so tests are compiled
   and `TMPDIR` is a disposable scratch directory.
-- Never write `.hnsw` files into the repo. Never enable `fiqa-prep`. Never run
-  `benchmarks/competitors`.
+- Never write `.hnsw` files into the repo. Run benchmark-artifact coverage only
+  through its mapped offline verifier; never invoke `fetch`, `prepare-fiqa`,
+  `publish`, `cargo bench`, or the competitor benchmark executable.
 - Never drive deletion, in-place updates, or concurrent mutation — the crate
   does not support them.
 
 ## Driving conventions
 
 - Start every recipe from a successful doctor + launch for this `RUN_ID`.
-- Drive through `verify-bifrost.sh`, which wraps `cargo test --all-features`.
+- Drive through `verify-bifrost.sh`, which wraps the mapped root tests or the
+  offline benchmark-artifact verifier.
 - Treat every test name and flag as literal.
 - Vectors passed to `insert`/`search` must be unit-normalized (`1 - dot`
   cosine). `bifrost::vector::cosine_similarity` is for arbitrary vectors and
@@ -39,8 +41,10 @@ the matching feature file as the recipe.
   `.cursor/skills/verify-bifrost/artifacts/<run-id>/`.
 - Report an unreachable path with the attempted cargo filter and the unmet
   precondition (missing rustc, fixture SHA mismatch, compile failure).
-- Do not report competitor-bench or FiQA coverage as verified. Do not report a
-  skipped entry point as verified through a different filter.
+- Report benchmark-artifact **contract tests** as verified only through
+  `benchmark-artifacts`. Do not claim that remote fetching, paid FiQA
+  generation, publication, or benchmark timings ran; those entry points remain
+  deliberately unreachable in this safe drive.
 
 ## Feature entry contract
 
@@ -67,3 +71,6 @@ filters, required state, commands, and observable proof.
   IDs, and invalid `Config` values.
 - [Batch build](./batch-build.md) covers `HnswIndex::build` assigning dense
   IDs from `0`.
+- [Benchmark artifacts](./benchmark-artifacts.md) covers the checked-in
+  catalog, v2 fixture integrity, resumable artifact workflows through test
+  doubles, read-only cache consumption, and separate benchmark output.

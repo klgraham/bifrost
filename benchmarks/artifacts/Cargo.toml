@@ -1,0 +1,28 @@
+[package]
+name = "bifrost-benchmark-artifacts"
+version = "0.1.0"
+edition = "2024"
+publish = false
+rust-version = "1.89"
+default-run = "bifrost-benchmark-artifacts"
+
+[dependencies]
+bifrost-benchmark-fixture = { path = "../fixture" }
+dirs = "=6.0.0"
+fs2 = "=0.4.3"
+hf-hub = { version = "=1.0.0", features = ["blocking", "rustls-tls"] }
+# hf-hub 1.0.0 declares these as 1.5.3-compatible caret requirements. The 1.6.0
+# Xet family uses a standard-library API that is not stable on our Rust 1.89 MSRV.
+hf-xet = "=1.5.3"
+xet-client = "=1.5.3"
+xet-core-structures = "=1.5.3"
+xet-data = "=1.5.3"
+xet-runtime = "=1.5.3"
+reqwest = { version = "=0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.11.0"
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
