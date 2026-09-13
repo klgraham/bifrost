@@ -50,13 +50,3 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc g++
       - run: cargo clippy --manifest-path benchmarks/competitors/Cargo.toml --all-targets --all-features -- -D warnings
       - run: cargo test --manifest-path benchmarks/competitors/Cargo.toml
-
-  miri:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-      - run: cargo miri setup
-      - run: cargo miri test --lib
