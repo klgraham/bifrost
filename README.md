@@ -148,6 +148,9 @@ are not supported.
 
 ## Verify
 
+For local and Codex cloud setup, including both benchmark crates, see
+[Bifrost development environment](docs/development-environment.md).
+
 ```bash
 cargo test --all-features
 ```

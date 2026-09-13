@@ -147,6 +147,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "bifrost-competitor-benchmarks"
+version = "0.0.0"
+dependencies = [
+ "bifrost-index",
+ "hnsw_rs",
+ "md5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "usearch",
+ "zip",
+]
+
+[[package]]
+name = "bifrost-index"
+version = "0.2.2"
+dependencies = [
+ "crc32fast",
+ "memmap2",
+ "rand 0.10.2",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -678,29 +701,6 @@ name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
-
-[[package]]
-name = "bifrost-index"
-version = "0.2.0"
-dependencies = [
- "crc32fast",
- "memmap2",
- "rand 0.10.2",
-]
-
-[[package]]
-name = "bifrost-competitor-benchmarks"
-version = "0.0.0"
-dependencies = [
- "bifrost-index",
- "hnsw_rs",
- "md5",
- "reqwest",
- "serde",
- "serde_json",
- "usearch",
- "zip",
-]
 
 [[package]]
 name = "hnsw_rs"
