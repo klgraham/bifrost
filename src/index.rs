@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
-    Config, Error, ExternalId, Graph, LoadedHnsw, NodeIndex, NodeMeta, Result,
+    Config, Error, ExternalId, Graph, NodeIndex, NodeMeta, Result,
     layer::{
         Candidate, SearchGraph, SearchResult, VectorStore, VisitedList, search_knn,
         search_layer_excluding, select_neighbors_heuristic,
@@ -26,8 +26,9 @@ pub struct SearchHit {
 /// Mutable HNSW index supporting incremental insertion and nearest-neighbor search.
 ///
 /// Persist a built index with [`HnswIndex::save`] and later reopen it for
-/// query-only search with [`HnswIndex::load`]. Construction parameters such as
-/// [`Config::m`] and [`Config::dim`] are fixed at [`HnswIndex::new`]; use
+/// query-only search with [`crate::load_file`] or [`crate::LoadedHnsw::open`].
+/// Construction parameters such as [`Config::m`] and [`Config::dim`] are
+/// fixed at [`HnswIndex::new`]; use
 /// [`HnswIndex::set_ef_search`] to change the stored query candidate width, or
 /// [`HnswIndex::search_with_ef`] to override it for one query. Search uses
 /// `max(ef_search, k)` so a request larger than the stored width still returns
@@ -388,16 +389,6 @@ impl HnswIndex {
         crate::serialize::save_file(self, path)
     }
 
-    /// Memory-maps a previously saved `.hnsw` snapshot for query-only search.
-    ///
-    /// Prefer [`LoadedHnsw::open`] or [`crate::load_file`]; this is the same
-    /// mapping constructor and does **not** rebuild a mutable [`HnswIndex`].
-    /// Further inserts still require a live builder. Do not mutate the file
-    /// while the returned mapping lives.
-    pub fn load(path: impl AsRef<Path>) -> Result<LoadedHnsw> {
-        LoadedHnsw::open(path)
-    }
-
     /// Number of inserted vectors.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -662,7 +653,7 @@ fn select_entry_point_for_level(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vector::cosine_distance_unchecked;
+    use crate::{LoadedHnsw, vector::cosine_distance_unchecked};
 
     fn config(dim: u16) -> Config {
         Config {

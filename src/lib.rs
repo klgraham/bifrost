@@ -71,14 +71,11 @@ mod error;
 mod graph;
 mod index;
 mod layer;
-pub mod serialize;
+mod serialize;
 pub mod vector;
 
 pub use config::Config;
 pub use error::{Error, Result};
 pub use graph::{ExternalId, Graph, NodeIndex, NodeMeta};
 pub use index::{HnswIndex, SearchHit};
-pub use serialize::{
-    HEADER_SIZE, Header, LoadedHnsw, MAGIC, MIGRATABLE_VERSION, NODE_META_SIZE, VERSION, load_file,
-    save_file,
-};
+pub use serialize::{EdgeView, Header, LoadedHnsw, MAGIC, VERSION, VectorView, load_file};

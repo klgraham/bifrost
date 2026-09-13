@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Narrow the crate-root persistence surface (0.x break). `mod serialize` is
+  private. Stop re-exporting `save_file`, `HnswIndex::load`, `HEADER_SIZE`,
+  `NODE_META_SIZE`, and `MIGRATABLE_VERSION`. Persist with `HnswIndex::save`;
+  load with `load_file` or `LoadedHnsw::open`. `VectorView` and `EdgeView`
+  are crate-root types. Remove unused `LoadedHnsw::file_size`.
+
 ## 0.2.2 - 2026-09-10
 
 - Improve public rustdoc for integrators (crate overview, `Error` variants,
@@ -125,7 +133,7 @@
 - Mmap accessors decode checked little-endian views rather than exposing typed
   slices cast directly from file bytes. The mapping is read-only; do not
   mutate the file while `LoadedHnsw` lives.
-- `save_file` and v2→v3 migration replace the destination with temp +
+- `HnswIndex::save` and v2→v3 migration replace the destination with temp +
   `sync_all` + `rename`.
 - `LoadedHnsw::search` / `LoadedHnsw::open` query a saved snapshot without
   reconstructing a mutable index.
