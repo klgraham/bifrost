@@ -58,5 +58,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - run: cargo miri setup
-      - run: cargo miri test --lib
+      - run: cargo +nightly miri setup
+      - run: cargo +nightly miri test --lib
